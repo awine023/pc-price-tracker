@@ -89,13 +89,30 @@ def save_data(data: Dict) -> None:
 def send_message_sync(app: Application, chat_id: int, text: str, loop: asyncio.AbstractEventLoop) -> None:
     """Envoie un message Telegram de manière synchrone (utilitaire pour éviter la duplication)."""
     try:
-        loop.run_until_complete(
-            app.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode="Markdown"
+        # Vérifier si la boucle est fermée
+        if loop.is_closed():
+            logger.warning(f"Boucle fermée, création d'une nouvelle boucle pour envoyer le message à {chat_id}")
+            # Créer une nouvelle boucle temporaire
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                new_loop.run_until_complete(
+                    app.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode="Markdown"
+                    )
+                )
+            finally:
+                new_loop.close()
+        else:
+            loop.run_until_complete(
+                app.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode="Markdown"
+                )
             )
-        )
     except Exception as e:
         logger.error(f"Erreur lors de l'envoi du message à {chat_id}: {e}")
 
