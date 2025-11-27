@@ -2137,19 +2137,6 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             message += "\n"
         
         message += f"✅ Comparaison sauvegardée. Mise à jour automatique toutes les 60 minutes."
-        
-        for site_name, price, url, title in all_prices:
-            if site_name == best_site:
-                message += f"🏆 **{site_name}: ${price:.2f} CAD** (MEILLEUR PRIX)\n"
-            else:
-                diff = price - best_price
-                message += f"💰 {site_name}: ${price:.2f} CAD (+${diff:.2f})\n"
-            if url:
-                message += f"   🔗 {url}\n"
-            message += "\n"
-        
-        message += f"✅ **Produit ajouté à la surveillance !**\n"
-        message += f"Le bot comparera automatiquement les prix toutes les 60 minutes.\n"
         message += f"Vous recevrez une alerte si un meilleur prix est trouvé."
         
         await update.message.reply_text(message, parse_mode="Markdown")
