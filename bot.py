@@ -3396,16 +3396,6 @@ def check_price_comparisons(app: Application) -> None:
                 except Exception as e:
                     logger.error(f"Erreur recherche Amazon pour '{product_name}': {e}")
                 
-                # Canada Computers - récupérer plusieurs produits et prendre le meilleur
-                try:
-                    cc_results = loop.run_until_complete(
-                        canadacomputers_scraper.search_products(search_query, max_results=3)
-                    )
-                    cc_result = min(cc_results, key=lambda x: x.get("price", float('inf'))) if cc_results else None
-                except Exception as e:
-                    logger.error(f"Erreur recherche Canada Computers pour '{product_name}': {e}")
-                    cc_result = None
-                
                 # Newegg - récupérer plusieurs produits et prendre le meilleur
                 try:
                     newegg_results = loop.run_until_complete(
