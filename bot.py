@@ -86,6 +86,20 @@ def save_data(data: Dict) -> None:
         logger.error(f"Erreur lors de la sauvegarde: {e}")
 
 
+def send_message_sync(app: Application, chat_id: int, text: str, loop: asyncio.AbstractEventLoop) -> None:
+    """Envoie un message Telegram de manière synchrone (utilitaire pour éviter la duplication)."""
+    try:
+        loop.run_until_complete(
+            app.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="Markdown"
+            )
+        )
+    except Exception as e:
+        logger.error(f"Erreur lors de l'envoi du message à {chat_id}: {e}")
+
+
 def extract_asin(url_or_asin: str) -> Optional[str]:
     """Extrait l'ASIN d'une URL Amazon ou retourne l'ASIN directement."""
     # Si c'est déjà un ASIN (10 caractères alphanumériques)
@@ -2290,13 +2304,7 @@ def scan_amazon_globally(app: Application, notify_chat_id: Optional[int] = None)
                     f"Utilisez ces commandes pour voir les détails !"
                 )
                 
-                loop.run_until_complete(
-                    app.bot.send_message(
-                        chat_id=notify_chat_id,
-                        text=message,
-                        parse_mode="Markdown"
-                    )
-                )
+                send_message_sync(app, notify_chat_id, message, loop)
                 logger.info(f"✅ Notification envoyée à {notify_chat_id} après le scan")
             except Exception as e:
                 logger.error(f"Erreur lors de l'envoi de la notification: {e}")
@@ -2389,17 +2397,8 @@ def check_prices(app: Application) -> None:
                     # Envoyer l'alerte à tous les utilisateurs
                     for user_id, user_data in data["users"].items():
                         if asin in user_data.get("products", []):
-                            try:
-                                loop.run_until_complete(
-                                    app.bot.send_message(
-                                        chat_id=int(user_id),
-                                        text=error_message,
-                                        parse_mode="Markdown",
-                                    )
-                                )
-                                logger.info(f"⚠️ Alerte erreur de prix envoyée à {user_id} pour {asin}")
-                            except Exception as e:
-                                logger.error(f"Erreur lors de l'envoi de l'alerte erreur: {e}")
+                            send_message_sync(app, int(user_id), error_message, loop)
+                            logger.info(f"⚠️ Alerte erreur de prix envoyée à {user_id} pour {asin}")
 
                 # Détecter les gros rabais
                 elif analysis['is_big_discount']:
@@ -2432,17 +2431,8 @@ def check_prices(app: Application) -> None:
                     # Envoyer l'alerte à tous les utilisateurs
                     for user_id, user_data in data["users"].items():
                         if asin in user_data.get("products", []):
-                            try:
-                                loop.run_until_complete(
-                                    app.bot.send_message(
-                                        chat_id=int(user_id),
-                                        text=big_deal_message,
-                                        parse_mode="Markdown",
-                                    )
-                                )
-                                logger.info(f"🔥 Alerte gros rabais envoyée à {user_id} pour {asin}")
-                            except Exception as e:
-                                logger.error(f"Erreur lors de l'envoi de l'alerte gros rabais: {e}")
+                            send_message_sync(app, int(user_id), big_deal_message, loop)
+                            logger.info(f"🔥 Alerte gros rabais envoyée à {user_id} pour {asin}")
 
                 # Vérifier si le prix a baissé (alerte normale)
                 elif current_price and last_price and current_price < last_price:
@@ -2464,17 +2454,8 @@ def check_prices(app: Application) -> None:
                     # Envoyer l'alerte à tous les utilisateurs
                     for user_id, user_data in data["users"].items():
                         if asin in user_data.get("products", []):
-                            try:
-                                loop.run_until_complete(
-                                    app.bot.send_message(
-                                        chat_id=int(user_id),
-                                        text=alert_message,
-                                        parse_mode="Markdown",
-                                    )
-                                )
-                                logger.info(f"Alerte envoyée à l'utilisateur {user_id} pour {asin}")
-                            except Exception as e:
-                                logger.error(f"Erreur lors de l'envoi de l'alerte: {e}")
+                            send_message_sync(app, int(user_id), alert_message, loop)
+                            logger.info(f"Alerte envoyée à l'utilisateur {user_id} pour {asin}")
 
                 save_data(data)
                 time.sleep(2)  # Pause entre les requêtes
@@ -2557,17 +2538,8 @@ def check_prices(app: Application) -> None:
                         # Envoyer à tous les utilisateurs qui surveillent cette catégorie
                         for user_id, user_data in data["users"].items():
                             if category_id in user_data.get("categories", []):
-                                try:
-                                    loop.run_until_complete(
-                                        app.bot.send_message(
-                                            chat_id=int(user_id),
-                                            text=alert_message,
-                                            parse_mode="Markdown",
-                                        )
-                                    )
-                                    logger.info(f"Alerte catégorie envoyée à {user_id} pour {product['asin']}")
-                                except Exception as e:
-                                    logger.error(f"Erreur lors de l'envoi de l'alerte catégorie: {e}")
+                                send_message_sync(app, int(user_id), alert_message, loop)
+                                logger.info(f"Alerte catégorie envoyée à {user_id} pour {product['asin']}")
                 
                 save_data(data)
                 time.sleep(3)  # Pause entre les catégories
