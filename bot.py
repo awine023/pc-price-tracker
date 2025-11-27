@@ -1190,7 +1190,7 @@ class CanadaComputersScraper:
                                     const priceElem = product.querySelector(selector);
                                     if (priceElem) {{
                                         const priceText = priceElem.textContent || priceElem.innerText || '';
-                                        const match = priceText.match(/\\$?\\s*([\\d,]+\.?\\d*)/);
+                                        const match = priceText.match(/\\$?\\s*([\\d,]+\\\\.?\\d*)/);
                                         if (match) {{
                                             const testPrice = parseFloat(match[1].replace(/,/g, ''));
                                             if (testPrice > 0 && testPrice < 100000) {{
@@ -1205,7 +1205,7 @@ class CanadaComputersScraper:
                             // Si toujours pas trouvé, chercher dans tout le texte
                             if (!price || price <= 0) {{
                                 const allText = product.textContent || '';
-                                const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\.?\\d*)/g);
+                                const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\\\\.?\\d*)/g);
                                 for (const match of priceMatches) {{
                                     const testPrice = parseFloat(match[1].replace(/,/g, ''));
                                     if (testPrice > 1 && testPrice < 100000) {{
@@ -1293,77 +1293,76 @@ class CanadaComputersScraper:
             
             products_list = []
             for product_elem in product_elems[:max_results]:
-            
-            # Extraire le titre
-            title = None
-            title_selectors = ['a[title]', 'h2', 'h3', '.product-name', '[class*="title"]', 'a']
-            for selector in title_selectors:
-                title_elem = product_elem.select_one(selector)
-                if title_elem:
-                    title = title_elem.get('title') or title_elem.get_text(strip=True)
-                    if title:
-                        break
-            
-            if not title:
-                title = "Produit Canada Computers"
-            
-            # Extraire le prix avec plusieurs méthodes
-            price = None
-            
-            # D'abord chercher "Member Price:" (prix membre, souvent le meilleur)
-            all_text = product_elem.get_text()
-            member_price_match = re.search(r'Member Price:\s*\$?([\d,]+\.?\d*)', all_text, re.IGNORECASE)
-            if member_price_match:
-                try:
-                    test_price = float(member_price_match.group(1).replace(',', ''))
-                    if 1 < test_price < 100000:
-                        price = test_price
-                except ValueError:
-                    pass
-            
-            # Si pas de prix membre, chercher les autres formats
-            if not price:
-                price_selectors = [
-                    '.price', '.product-price', '.price-current',
-                    '.price-regular', 'strong.price', 'span.price', 
-                    '[class*="price"]', '.d-block.price'
-                ]
+                # Extraire le titre
+                title = None
+                title_selectors = ['a[title]', 'h2', 'h3', '.product-name', '[class*="title"]', 'a']
+                for selector in title_selectors:
+                    title_elem = product_elem.select_one(selector)
+                    if title_elem:
+                        title = title_elem.get('title') or title_elem.get_text(strip=True)
+                        if title:
+                            break
                 
-                for selector in price_selectors:
-                    price_elem = product_elem.select_one(selector)
-                    if price_elem:
-                        price_text = price_elem.get_text(strip=True)
-                        # Chercher le premier prix valide
-                        price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_text)
-                        if price_match:
-                            try:
-                                test_price = float(price_match.group(1).replace(',', ''))
-                                if 1 < test_price < 100000:
-                                    price = test_price
-                                    break
-                            except ValueError:
-                                continue
-            
-            # Si toujours pas trouvé, chercher dans tout le texte
-            if not price:
-                price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
-                for match in price_matches:
+                if not title:
+                    title = "Produit Canada Computers"
+                
+                # Extraire le prix avec plusieurs méthodes
+                price = None
+                
+                # D'abord chercher "Member Price:" (prix membre, souvent le meilleur)
+                all_text = product_elem.get_text()
+                member_price_match = re.search(r'Member Price:\s*\$?([\d,]+\.?\d*)', all_text, re.IGNORECASE)
+                if member_price_match:
                     try:
-                        test_price = float(match.replace(',', ''))
+                        test_price = float(member_price_match.group(1).replace(',', ''))
                         if 1 < test_price < 100000:
                             price = test_price
-                            break
                     except ValueError:
-                        continue
-            
-            # Extraire l'URL
-            url_elem = product_elem.select_one('a[href]')
-            url = url_elem.get('href') if url_elem else None
-            if url and not url.startswith('http'):
-                url = f"https://www.canadacomputers.com{url}"
-            
+                        pass
+                
+                # Si pas de prix membre, chercher les autres formats
+                if not price:
+                    price_selectors = [
+                        '.price', '.product-price', '.price-current',
+                        '.price-regular', 'strong.price', 'span.price', 
+                        '[class*="price"]', '.d-block.price'
+                    ]
+                    
+                    for selector in price_selectors:
+                        price_elem = product_elem.select_one(selector)
+                        if price_elem:
+                            price_text = price_elem.get_text(strip=True)
+                            # Chercher le premier prix valide
+                            price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_text)
+                            if price_match:
+                                try:
+                                    test_price = float(price_match.group(1).replace(',', ''))
+                                    if 1 < test_price < 100000:
+                                        price = test_price
+                                        break
+                                except ValueError:
+                                    continue
+                
+                # Si toujours pas trouvé, chercher dans tout le texte
+                if not price:
+                    price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
+                    for match in price_matches:
+                        try:
+                            test_price = float(match.replace(',', ''))
+                            if 1 < test_price < 100000:
+                                price = test_price
+                                break
+                        except ValueError:
+                            continue
+                
                 if not price or price <= 0:
                     continue
+                
+                # Extraire l'URL
+                url_elem = product_elem.select_one('a[href]')
+                url = url_elem.get('href') if url_elem else None
+                if url and not url.startswith('http'):
+                    url = f"https://www.canadacomputers.com{url}"
                 
                 # S'assurer que l'URL est un lien direct, pas une page de recherche
                 if url and ('search' in url or 'results_details' in url):
@@ -1510,7 +1509,7 @@ class NeweggScraper:
                             // Si pas trouvé, chercher dans tout le texte
                             if (!price || price <= 0) {{
                                 const allText = product.textContent || '';
-                                const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\.?\\d*)/g);
+                                const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\\\\.?\\d*)/g);
                                 for (const match of priceMatches) {{
                                     const testPrice = parseFloat(match[1].replace(/,/g, ''));
                                     if (testPrice > 1 && testPrice < 100000) {{
@@ -1597,50 +1596,49 @@ class NeweggScraper:
             
             products_list = []
             for product_elem in product_elems[:max_results]:
-            
-            # Extraire le titre
-            title = None
-            title_selectors = ['a.item-title', '.item-title', 'img[alt]', 'a[title]']
-            for selector in title_selectors:
-                title_elem = product_elem.select_one(selector)
-                if title_elem:
-                    title = title_elem.get('title') or title_elem.get('alt') or title_elem.get_text(strip=True)
-                    if title:
-                        break
-            
-            if not title:
-                title = "Produit Newegg"
-            
-            # Extraire le prix avec plusieurs méthodes
-            price = None
-            price_selectors = [
-                'li.price-current',
-                '.price-current',
-                'ul.price li',
-                '.price',
-                '[class*="price-current"]',
-                'strong.price-current',
-                '.price-box'
-            ]
-            
-            for selector in price_selectors:
-                price_elem = product_elem.select_one(selector)
-                if price_elem:
-                    price_text = price_elem.get_text(strip=True)
-                    # Newegg peut avoir "CAD $XXX.XX" ou "$XXX.XX" ou "XXX.XX"
-                    # Chercher tous les nombres et prendre le premier valide
-                    price_matches = re.findall(r'[\d,]+\.?\d*', price_text.replace(',', ''))
-                    for match in price_matches:
-                        try:
-                            test_price = float(match)
-                            if 1 < test_price < 100000:
-                                price = test_price
-                                break
-                        except ValueError:
-                            continue
-                    if price:
-                        break
-            
+                # Extraire le titre
+                title = None
+                title_selectors = ['a.item-title', '.item-title', 'img[alt]', 'a[title]']
+                for selector in title_selectors:
+                    title_elem = product_elem.select_one(selector)
+                    if title_elem:
+                        title = title_elem.get('title') or title_elem.get('alt') or title_elem.get_text(strip=True)
+                        if title:
+                            break
+                
+                if not title:
+                    title = "Produit Newegg"
+                
+                # Extraire le prix avec plusieurs méthodes
+                price = None
+                price_selectors = [
+                    'li.price-current',
+                    '.price-current',
+                    'ul.price li',
+                    '.price',
+                    '[class*="price-current"]',
+                    'strong.price-current',
+                    '.price-box'
+                ]
+                
+                for selector in price_selectors:
+                    price_elem = product_elem.select_one(selector)
+                    if price_elem:
+                        price_text = price_elem.get_text(strip=True)
+                        # Newegg peut avoir "CAD $XXX.XX" ou "$XXX.XX" ou "XXX.XX"
+                        # Chercher tous les nombres et prendre le premier valide
+                        price_matches = re.findall(r'[\d,]+\.?\d*', price_text.replace(',', ''))
+                        for match in price_matches:
+                            try:
+                                test_price = float(match)
+                                if 1 < test_price < 100000:
+                                    price = test_price
+                                    break
+                            except ValueError:
+                                continue
+                        if price:
+                            break
+                
                 # Si pas trouvé, chercher dans tout le texte
                 if not price:
                     all_text = product_elem.get_text()
