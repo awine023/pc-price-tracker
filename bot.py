@@ -1670,7 +1670,20 @@ class MemoryExpressScraper:
                     break
             
             if not product_elems:
-                return []
+                logger.warning("Aucun produit trouvé avec BeautifulSoup sur Memory Express")
+                # Dernière tentative: chercher n'importe quel élément avec un prix
+                all_elems = soup.select('div, article, section')
+                for elem in all_elems:
+                    text = elem.get_text()
+                    # Chercher si l'élément contient un prix
+                    if re.search(r'\$\s*[\d,]+\.?\d*', text):
+                        product_elems.append(elem)
+                        if len(product_elems) >= max_results * 2:  # Prendre plus pour filtrer
+                            break
+                
+                if not product_elems:
+                    logger.error("Aucun produit trouvé sur Memory Express après toutes les tentatives")
+                    return []
             
             products_list = []
             for product_elem in product_elems[:max_results]:
