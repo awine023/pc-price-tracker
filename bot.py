@@ -1137,45 +1137,93 @@ class CanadaComputersScraper:
             try:
                 js_result = await self.page.evaluate("""
                     () => {
-                        // Chercher le premier produit dans les résultats
-                        const product = document.querySelector('.productTemplate, .product-list-item, [class*="product"]');
-                        if (!product) return null;
+                        // Chercher le premier produit dans les résultats de recherche
+                        // Canada Computers utilise souvent des divs avec des classes spécifiques
+                        const product = document.querySelector('.productTemplate, .product-list-item, .product-item, [data-product-id], article.product, div[class*="product"]');
+                        if (!product) {
+                            // Essayer de trouver n'importe quel produit dans la liste
+                            const products = document.querySelectorAll('[class*="product"], [class*="item"]');
+                            if (products.length > 0) {
+                                return { product: products[0] };
+                            }
+                            return null;
+                        }
                         
                         // Extraire le titre
-                        const titleElem = product.querySelector('a[title], h2, h3, .product-name, [class*="title"]');
-                        const title = titleElem ? (titleElem.textContent || titleElem.getAttribute('title') || '').trim() : '';
-                        
-                        // Extraire le prix - Canada Computers utilise souvent .price ou .product-price
-                        let price = null;
-                        const priceSelectors = [
-                            '.price', '.product-price', '.price-current', 
-                            '[class*="price"]', 'strong.price', 'span.price'
+                        let title = '';
+                        const titleSelectors = [
+                            'a[title]', 'h2 a', 'h3 a', '.product-name', 
+                            '[class*="title"]', 'a.product-name', 'h2', 'h3'
                         ];
+                        for (const selector of titleSelectors) {
+                            const titleElem = product.querySelector(selector);
+                            if (titleElem) {
+                                title = (titleElem.getAttribute('title') || titleElem.textContent || '').trim();
+                                if (title) break;
+                            }
+                        }
                         
-                        for (const selector of priceSelectors) {
-                            const priceElem = product.querySelector(selector);
-                            if (priceElem) {
-                                const priceText = priceElem.textContent || priceElem.innerText || '';
-                                const match = priceText.match(/[\d,]+\.?\d*/);
-                                if (match) {
-                                    price = parseFloat(match[0].replace(/,/g, ''));
-                                    if (price > 0 && price < 100000) break;
+                        // Extraire le prix - Canada Computers peut avoir plusieurs formats
+                        // Format 1: "Member Price: $XX.XX" ou "$XX.XX"
+                        // Format 2: Prix dans des spans avec classes spécifiques
+                        let price = null;
+                        
+                        // Chercher "Member Price:" d'abord (prix membre, souvent le meilleur)
+                        const memberPriceText = product.textContent || '';
+                        const memberPriceMatch = memberPriceText.match(/Member Price:\\s*\\$?([\\d,]+\.?\\d*)/i);
+                        if (memberPriceMatch) {
+                            price = parseFloat(memberPriceMatch[1].replace(/,/g, ''));
+                        }
+                        
+                        // Si pas de prix membre, chercher le prix régulier
+                        if (!price || price <= 0) {
+                            const priceSelectors = [
+                                '.price', '.product-price', '.price-current', 
+                                '.price-regular', '[class*="price"]', 
+                                'strong.price', 'span.price', '.d-block.price'
+                            ];
+                            
+                            for (const selector of priceSelectors) {
+                                const priceElem = product.querySelector(selector);
+                                if (priceElem) {
+                                    const priceText = priceElem.textContent || priceElem.innerText || '';
+                                    // Chercher le premier prix valide (format: $XX.XX ou XX.XX)
+                                    const match = priceText.match(/\\$?\\s*([\\d,]+\.?\\d*)/);
+                                    if (match) {
+                                        const testPrice = parseFloat(match[1].replace(/,/g, ''));
+                                        if (testPrice > 0 && testPrice < 100000) {
+                                            price = testPrice;
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
                         
-                        // Si pas trouvé, chercher dans tout le texte du produit
-                        if (!price) {
+                        // Si toujours pas trouvé, chercher dans tout le texte
+                        if (!price || price <= 0) {
                             const allText = product.textContent || '';
-                            const priceMatch = allText.match(/\$?\s*([\d,]+\.?\d*)/);
-                            if (priceMatch) {
-                                price = parseFloat(priceMatch[1].replace(/,/g, ''));
+                            // Chercher tous les prix et prendre le premier valide
+                            const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\.?\\d*)/g);
+                            for (const match of priceMatches) {
+                                const testPrice = parseFloat(match[1].replace(/,/g, ''));
+                                if (testPrice > 1 && testPrice < 100000) {
+                                    price = testPrice;
+                                    break;
+                                }
                             }
                         }
                         
                         // Extraire l'URL
-                        const linkElem = product.querySelector('a[href]');
-                        const url = linkElem ? linkElem.getAttribute('href') : '';
+                        let url = '';
+                        const linkSelectors = ['a[href*="/product"]', 'a[href*="/item"]', 'a[title]', 'a[href]'];
+                        for (const selector of linkSelectors) {
+                            const linkElem = product.querySelector(selector);
+                            if (linkElem) {
+                                url = linkElem.getAttribute('href') || '';
+                                if (url) break;
+                            }
+                        }
                         
                         return { title, price, url };
                     }
@@ -1231,28 +1279,43 @@ class CanadaComputersScraper:
             
             # Extraire le prix avec plusieurs méthodes
             price = None
-            price_selectors = [
-                '.price', '.product-price', '.price-current',
-                'strong.price', 'span.price', '[class*="price"]'
-            ]
             
-            for selector in price_selectors:
-                price_elem = product_elem.select_one(selector)
-                if price_elem:
-                    price_text = price_elem.get_text(strip=True)
-                    price_match = re.search(r'[\d,]+\.?\d*', price_text.replace(',', ''))
-                    if price_match:
-                        try:
-                            test_price = float(price_match.group())
-                            if 1 < test_price < 100000:
-                                price = test_price
-                                break
-                        except ValueError:
-                            continue
+            # D'abord chercher "Member Price:" (prix membre, souvent le meilleur)
+            all_text = product_elem.get_text()
+            member_price_match = re.search(r'Member Price:\s*\$?([\d,]+\.?\d*)', all_text, re.IGNORECASE)
+            if member_price_match:
+                try:
+                    test_price = float(member_price_match.group(1).replace(',', ''))
+                    if 1 < test_price < 100000:
+                        price = test_price
+                except ValueError:
+                    pass
             
-            # Si pas trouvé, chercher dans tout le texte
+            # Si pas de prix membre, chercher les autres formats
             if not price:
-                all_text = product_elem.get_text()
+                price_selectors = [
+                    '.price', '.product-price', '.price-current',
+                    '.price-regular', 'strong.price', 'span.price', 
+                    '[class*="price"]', '.d-block.price'
+                ]
+                
+                for selector in price_selectors:
+                    price_elem = product_elem.select_one(selector)
+                    if price_elem:
+                        price_text = price_elem.get_text(strip=True)
+                        # Chercher le premier prix valide
+                        price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_text)
+                        if price_match:
+                            try:
+                                test_price = float(price_match.group(1).replace(',', ''))
+                                if 1 < test_price < 100000:
+                                    price = test_price
+                                    break
+                            except ValueError:
+                                continue
+            
+            # Si toujours pas trouvé, chercher dans tout le texte
+            if not price:
                 price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
                 for match in price_matches:
                     try:
@@ -1338,51 +1401,95 @@ class NeweggScraper:
             try:
                 js_result = await self.page.evaluate("""
                     () => {
-                        // Newegg utilise .item-cell ou .item-container
-                        const product = document.querySelector('.item-cell, .item-container, [class*="item-cell"]');
-                        if (!product) return null;
+                        // Newegg utilise .item-cell ou .item-container pour les résultats de recherche
+                        const product = document.querySelector('.item-cell, .item-container, [class*="item-cell"], [class*="item-container"]');
+                        if (!product) {
+                            // Essayer de trouver n'importe quel produit
+                            const products = document.querySelectorAll('[class*="item"]');
+                            if (products.length > 0) {
+                                return { product: products[0] };
+                            }
+                            return null;
+                        }
                         
                         // Extraire le titre
-                        const titleElem = product.querySelector('a.item-title, .item-title, img[alt], a[title]');
-                        const title = titleElem ? (
-                            titleElem.getAttribute('title') || 
-                            titleElem.getAttribute('alt') || 
-                            titleElem.textContent || 
-                            ''
-                        ).trim() : '';
+                        let title = '';
+                        const titleSelectors = [
+                            'a.item-title', '.item-title', 
+                            'img[alt]', 'a[title]', 
+                            'a.item-img', '.item-info a'
+                        ];
+                        for (const selector of titleSelectors) {
+                            const titleElem = product.querySelector(selector);
+                            if (titleElem) {
+                                title = (
+                                    titleElem.getAttribute('title') || 
+                                    titleElem.getAttribute('alt') || 
+                                    titleElem.textContent || 
+                                    ''
+                                ).trim();
+                                if (title) break;
+                            }
+                        }
                         
-                        // Extraire le prix - Newegg utilise souvent .price-current ou .price
+                        // Extraire le prix - Newegg utilise .price-current pour le prix actuel
+                        // Format: "CAD $XXX.XX" ou "$XXX.XX" ou "XXX.XX"
                         let price = null;
                         const priceSelectors = [
-                            '.price-current', '.price', 'li.price-current',
-                            '[class*="price-current"]', 'strong.price-current'
+                            'li.price-current', '.price-current',
+                            '.price', 'ul.price li',
+                            '[class*="price-current"]', 
+                            'strong.price-current', '.price-box'
                         ];
                         
                         for (const selector of priceSelectors) {
                             const priceElem = product.querySelector(selector);
                             if (priceElem) {
-                                const priceText = priceElem.textContent || priceElem.innerText || '';
-                                // Newegg peut avoir "CAD $XXX.XX" ou juste "$XXX.XX"
-                                const match = priceText.match(/[\d,]+\.?\d*/);
-                                if (match) {
-                                    price = parseFloat(match[0].replace(/,/g, ''));
-                                    if (price > 0 && price < 100000) break;
+                                const priceText = (priceElem.textContent || priceElem.innerText || '').trim();
+                                // Newegg peut avoir "CAD $XXX.XX" ou "$XXX.XX" ou "XXX.XX"
+                                // Chercher le premier nombre qui ressemble à un prix
+                                const matches = priceText.matchAll(/[\\d,]+\.?\\d*/g);
+                                for (const match of matches) {
+                                    const testPrice = parseFloat(match[0].replace(/,/g, ''));
+                                    if (testPrice > 1 && testPrice < 100000) {
+                                        price = testPrice;
+                                        break;
+                                    }
+                                }
+                                if (price) break;
+                            }
+                        }
+                        
+                        // Si pas trouvé, chercher dans tout le texte du produit
+                        if (!price || price <= 0) {
+                            const allText = product.textContent || '';
+                            // Chercher tous les prix et prendre le premier valide
+                            const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\.?\\d*)/g);
+                            for (const match of priceMatches) {
+                                const testPrice = parseFloat(match[1].replace(/,/g, ''));
+                                if (testPrice > 1 && testPrice < 100000) {
+                                    price = testPrice;
+                                    break;
                                 }
                             }
                         }
                         
-                        // Si pas trouvé, chercher dans tout le texte
-                        if (!price) {
-                            const allText = product.textContent || '';
-                            const priceMatch = allText.match(/\$?\s*([\d,]+\.?\d*)/);
-                            if (priceMatch) {
-                                price = parseFloat(priceMatch[1].replace(/,/g, ''));
+                        // Extraire l'URL
+                        let url = '';
+                        const linkSelectors = [
+                            'a.item-title', 
+                            'a[href*="/p/"]', 
+                            'a[href*="/Product"]',
+                            'a.item-img',
+                            'a[href]'
+                        ];
+                        for (const selector of linkSelectors) {
+                            const linkElem = product.querySelector(selector);
+                            if (linkElem) {
+                                url = linkElem.getAttribute('href') || '';
+                                if (url) break;
                             }
                         }
-                        
-                        // Extraire l'URL
-                        const linkElem = product.querySelector('a.item-title, a[href*="/p/"]');
-                        const url = linkElem ? linkElem.getAttribute('href') : '';
                         
                         return { title, price, url };
                     }
