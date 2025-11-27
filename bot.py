@@ -1122,8 +1122,8 @@ class CanadaComputersScraper:
         self.browser = None
         self.playwright = None
     
-    async def search_product(self, search_query: str) -> Optional[Dict]:
-        """Recherche un produit sur Canada Computers."""
+    async def search_products(self, search_query: str, max_results: int = 3) -> List[Dict]:
+        """Recherche des produits sur Canada Computers et retourne plusieurs résultats."""
         try:
             if not self.page or not self.browser:
                 await self.init_browser()
@@ -1135,119 +1135,146 @@ class CanadaComputersScraper:
             
             # Essayer d'extraire avec JavaScript d'abord (plus fiable)
             try:
-                js_result = await self.page.evaluate("""
-                    () => {
-                        // Chercher le premier produit dans les résultats de recherche
-                        // Canada Computers utilise souvent des divs avec des classes spécifiques
-                        const product = document.querySelector('.productTemplate, .product-list-item, .product-item, [data-product-id], article.product, div[class*="product"]');
-                        if (!product) {
-                            // Essayer de trouver n'importe quel produit dans la liste
-                            const products = document.querySelectorAll('[class*="product"], [class*="item"]');
-                            if (products.length > 0) {
-                                return { product: products[0] };
-                            }
-                            return null;
-                        }
+                js_results = await self.page.evaluate(f"""
+                    () => {{
+                        const maxResults = {max_results};
+                        const results = [];
                         
-                        // Extraire le titre
-                        let title = '';
-                        const titleSelectors = [
-                            'a[title]', 'h2 a', 'h3 a', '.product-name', 
-                            '[class*="title"]', 'a.product-name', 'h2', 'h3'
-                        ];
-                        for (const selector of titleSelectors) {
-                            const titleElem = product.querySelector(selector);
-                            if (titleElem) {
-                                title = (titleElem.getAttribute('title') || titleElem.textContent || '').trim();
-                                if (title) break;
-                            }
-                        }
+                        // Chercher tous les produits dans les résultats de recherche
+                        const products = document.querySelectorAll('.productTemplate, .product-list-item, .product-item, [data-product-id], article.product, div[class*="product"]');
                         
-                        // Extraire le prix - Canada Computers peut avoir plusieurs formats
-                        // Format 1: "Member Price: $XX.XX" ou "$XX.XX"
-                        // Format 2: Prix dans des spans avec classes spécifiques
-                        let price = null;
+                        if (products.length === 0) {{
+                            // Essayer d'autres sélecteurs
+                            const altProducts = document.querySelectorAll('[class*="product"], [class*="item"]');
+                            if (altProducts.length > 0) {{
+                                products = altProducts;
+                            }}
+                        }}
                         
-                        // Chercher "Member Price:" d'abord (prix membre, souvent le meilleur)
-                        const memberPriceText = product.textContent || '';
-                        const memberPriceMatch = memberPriceText.match(/Member Price:\\s*\\$?([\\d,]+\.?\\d*)/i);
-                        if (memberPriceMatch) {
-                            price = parseFloat(memberPriceMatch[1].replace(/,/g, ''));
-                        }
-                        
-                        // Si pas de prix membre, chercher le prix régulier
-                        if (!price || price <= 0) {
-                            const priceSelectors = [
-                                '.price', '.product-price', '.price-current', 
-                                '.price-regular', '[class*="price"]', 
-                                'strong.price', 'span.price', '.d-block.price'
-                            ];
+                        for (let i = 0; i < Math.min(products.length, maxResults); i++) {{
+                            const product = products[i];
                             
-                            for (const selector of priceSelectors) {
-                                const priceElem = product.querySelector(selector);
-                                if (priceElem) {
-                                    const priceText = priceElem.textContent || priceElem.innerText || '';
-                                    // Chercher le premier prix valide (format: $XX.XX ou XX.XX)
-                                    const match = priceText.match(/\\$?\\s*([\\d,]+\.?\\d*)/);
-                                    if (match) {
-                                        const testPrice = parseFloat(match[1].replace(/,/g, ''));
-                                        if (testPrice > 0 && testPrice < 100000) {
-                                            price = testPrice;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                            // Extraire le titre
+                            let title = '';
+                            const titleSelectors = [
+                                'a[title]', 'h2 a', 'h3 a', '.product-name', 
+                                '[class*="title"]', 'a.product-name', 'h2', 'h3'
+                            ];
+                            for (const selector of titleSelectors) {{
+                                const titleElem = product.querySelector(selector);
+                                if (titleElem) {{
+                                    title = (titleElem.getAttribute('title') || titleElem.textContent || '').trim();
+                                    if (title) break;
+                                }}
+                            }}
+                            
+                            // Extraire le prix
+                            let price = null;
+                            
+                            // Chercher "Member Price:" d'abord
+                            const memberPriceText = product.textContent || '';
+                            const memberPriceMatch = memberPriceText.match(/Member Price:\\s*\\$?([\\d,]+\.?\\d*)/i);
+                            if (memberPriceMatch) {{
+                                price = parseFloat(memberPriceMatch[1].replace(/,/g, ''));
+                            }}
+                            
+                            // Si pas de prix membre, chercher le prix régulier
+                            if (!price || price <= 0) {{
+                                const priceSelectors = [
+                                    '.price', '.product-price', '.price-current', 
+                                    '.price-regular', '[class*="price"]', 
+                                    'strong.price', 'span.price', '.d-block.price'
+                                ];
+                                
+                                for (const selector of priceSelectors) {{
+                                    const priceElem = product.querySelector(selector);
+                                    if (priceElem) {{
+                                        const priceText = priceElem.textContent || priceElem.innerText || '';
+                                        const match = priceText.match(/\\$?\\s*([\\d,]+\.?\\d*)/);
+                                        if (match) {{
+                                            const testPrice = parseFloat(match[1].replace(/,/g, ''));
+                                            if (testPrice > 0 && testPrice < 100000) {{
+                                                price = testPrice;
+                                                break;
+                                            }}
+                                        }}
+                                    }}
+                                }}
+                            }}
+                            
+                            // Si toujours pas trouvé, chercher dans tout le texte
+                            if (!price || price <= 0) {{
+                                const allText = product.textContent || '';
+                                const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\.?\\d*)/g);
+                                for (const match of priceMatches) {{
+                                    const testPrice = parseFloat(match[1].replace(/,/g, ''));
+                                    if (testPrice > 1 && testPrice < 100000) {{
+                                        price = testPrice;
+                                        break;
+                                    }}
+                                }}
+                            }}
+                            
+                            // Extraire l'URL - IMPORTANT: chercher un lien direct vers le produit
+                            let url = '';
+                            const linkSelectors = [
+                                'a[href*="/product_info"]', 
+                                'a[href*="/product"]', 
+                                'a[href*="/item"]',
+                                'a[title]',
+                                'a[href]'
+                            ];
+                            for (const selector of linkSelectors) {{
+                                const linkElem = product.querySelector(selector);
+                                if (linkElem) {{
+                                    url = linkElem.getAttribute('href') || '';
+                                    // S'assurer que c'est un lien direct, pas une page de recherche
+                                    if (url && !url.includes('search') && !url.includes('results_details')) {{
+                                        break;
+                                    }}
+                                }}
+                            }}
+                            
+                            if (title && price && price > 0) {{
+                                results.push({{ title, price, url }});
+                            }}
+                        }}
                         
-                        // Si toujours pas trouvé, chercher dans tout le texte
-                        if (!price || price <= 0) {
-                            const allText = product.textContent || '';
-                            // Chercher tous les prix et prendre le premier valide
-                            const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\.?\\d*)/g);
-                            for (const match of priceMatches) {
-                                const testPrice = parseFloat(match[1].replace(/,/g, ''));
-                                if (testPrice > 1 && testPrice < 100000) {
-                                    price = testPrice;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // Extraire l'URL
-                        let url = '';
-                        const linkSelectors = ['a[href*="/product"]', 'a[href*="/item"]', 'a[title]', 'a[href]'];
-                        for (const selector of linkSelectors) {
-                            const linkElem = product.querySelector(selector);
-                            if (linkElem) {
-                                url = linkElem.getAttribute('href') || '';
-                                if (url) break;
-                            }
-                        }
-                        
-                        return { title, price, url };
-                    }
+                        return results;
+                    }}
                 """)
                 
-                if js_result and js_result.get('price') and js_result['price'] > 0:
-                    url = js_result.get('url', '')
-                    if url and not url.startswith('http'):
-                        url = f"https://www.canadacomputers.com{url}"
+                if js_results and len(js_results) > 0:
+                    products_list = []
+                    for result in js_results:
+                        url = result.get('url', '')
+                        # S'assurer que l'URL est complète et directe
+                        if url:
+                            if not url.startswith('http'):
+                                url = f"https://www.canadacomputers.com{url}"
+                            # Vérifier que ce n'est pas une page de recherche
+                            if 'search' in url or 'results_details' in url:
+                                continue
+                        else:
+                            url = search_url  # Fallback si pas de lien direct
+                        
+                        products_list.append({
+                            "title": result.get('title', 'Produit Canada Computers'),
+                            "price": result['price'],
+                            "url": url
+                        })
                     
-                    return {
-                        "title": js_result.get('title', 'Produit Canada Computers'),
-                        "price": js_result['price'],
-                        "url": url or search_url
-                    }
+                    if products_list:
+                        return products_list
             except Exception as e:
                 logger.debug(f"Erreur extraction JS Canada Computers: {e}")
             
-            # Fallback: BeautifulSoup
+            # Fallback: BeautifulSoup - chercher plusieurs produits
             html = await self.page.content()
             soup = BeautifulSoup(html, 'lxml')
             
-            # Chercher le premier produit avec plusieurs sélecteurs
-            product_elem = None
+            # Chercher tous les produits avec plusieurs sélecteurs
+            product_elems = []
             selectors = [
                 'div.productTemplate',
                 'div.product-list-item',
@@ -1257,12 +1284,15 @@ class CanadaComputersScraper:
             ]
             
             for selector in selectors:
-                product_elem = soup.select_one(selector)
-                if product_elem:
+                product_elems = soup.select(selector)
+                if product_elems:
                     break
             
-            if not product_elem:
-                return None
+            if not product_elems:
+                return []
+            
+            products_list = []
+            for product_elem in product_elems[:max_results]:
             
             # Extraire le titre
             title = None
@@ -1332,18 +1362,33 @@ class CanadaComputersScraper:
             if url and not url.startswith('http'):
                 url = f"https://www.canadacomputers.com{url}"
             
-            if not price or price <= 0:
-                logger.warning(f"Prix non trouvé pour '{search_query}' sur Canada Computers")
-                return None
+                if not price or price <= 0:
+                    continue
+                
+                # S'assurer que l'URL est un lien direct, pas une page de recherche
+                if url and ('search' in url or 'results_details' in url):
+                    # Essayer de trouver un meilleur lien
+                    better_link = product_elem.select_one('a[href*="/product_info"], a[href*="/product"]')
+                    if better_link and better_link.get('href'):
+                        better_url = better_link.get('href')
+                        if not better_url.startswith('http'):
+                            better_url = f"https://www.canadacomputers.com{better_url}"
+                        if 'search' not in better_url and 'results_details' not in better_url:
+                            url = better_url
+                
+                if not url or 'search' in url or 'results_details' in url:
+                    url = search_url  # Fallback
+                
+                products_list.append({
+                    "title": title,
+                    "price": price,
+                    "url": url
+                })
             
-            return {
-                "title": title,
-                "price": price,
-                "url": url or search_url
-            }
+            return products_list
         except Exception as e:
             logger.error(f"Erreur lors de la recherche Canada Computers: {e}")
-            return None
+            return []
 
 
 class NeweggScraper:
@@ -1386,8 +1431,8 @@ class NeweggScraper:
         self.browser = None
         self.playwright = None
     
-    async def search_product(self, search_query: str) -> Optional[Dict]:
-        """Recherche un produit sur Newegg Canada."""
+    async def search_products(self, search_query: str, max_results: int = 3) -> List[Dict]:
+        """Recherche des produits sur Newegg Canada et retourne plusieurs résultats."""
         try:
             if not self.page or not self.browser:
                 await self.init_browser()
@@ -1399,121 +1444,142 @@ class NeweggScraper:
             
             # Essayer d'extraire avec JavaScript d'abord (plus fiable)
             try:
-                js_result = await self.page.evaluate("""
-                    () => {
-                        // Newegg utilise .item-cell ou .item-container pour les résultats de recherche
-                        const product = document.querySelector('.item-cell, .item-container, [class*="item-cell"], [class*="item-container"]');
-                        if (!product) {
-                            // Essayer de trouver n'importe quel produit
-                            const products = document.querySelectorAll('[class*="item"]');
-                            if (products.length > 0) {
-                                return { product: products[0] };
-                            }
-                            return null;
-                        }
+                js_results = await self.page.evaluate(f"""
+                    () => {{
+                        const maxResults = {max_results};
+                        const results = [];
                         
-                        // Extraire le titre
-                        let title = '';
-                        const titleSelectors = [
-                            'a.item-title', '.item-title', 
-                            'img[alt]', 'a[title]', 
-                            'a.item-img', '.item-info a'
-                        ];
-                        for (const selector of titleSelectors) {
-                            const titleElem = product.querySelector(selector);
-                            if (titleElem) {
-                                title = (
-                                    titleElem.getAttribute('title') || 
-                                    titleElem.getAttribute('alt') || 
-                                    titleElem.textContent || 
-                                    ''
-                                ).trim();
-                                if (title) break;
-                            }
-                        }
+                        // Chercher tous les produits dans les résultats de recherche
+                        const products = document.querySelectorAll('.item-cell, .item-container, [class*="item-cell"], [class*="item-container"]');
                         
-                        // Extraire le prix - Newegg utilise .price-current pour le prix actuel
-                        // Format: "CAD $XXX.XX" ou "$XXX.XX" ou "XXX.XX"
-                        let price = null;
-                        const priceSelectors = [
-                            'li.price-current', '.price-current',
-                            '.price', 'ul.price li',
-                            '[class*="price-current"]', 
-                            'strong.price-current', '.price-box'
-                        ];
+                        if (products.length === 0) {{
+                            const altProducts = document.querySelectorAll('[class*="item"]');
+                            if (altProducts.length > 0) {{
+                                products = altProducts;
+                            }}
+                        }}
                         
-                        for (const selector of priceSelectors) {
-                            const priceElem = product.querySelector(selector);
-                            if (priceElem) {
-                                const priceText = (priceElem.textContent || priceElem.innerText || '').trim();
-                                // Newegg peut avoir "CAD $XXX.XX" ou "$XXX.XX" ou "XXX.XX"
-                                // Chercher le premier nombre qui ressemble à un prix
-                                const matches = priceText.matchAll(/[\\d,]+\.?\\d*/g);
-                                for (const match of matches) {
-                                    const testPrice = parseFloat(match[0].replace(/,/g, ''));
-                                    if (testPrice > 1 && testPrice < 100000) {
+                        for (let i = 0; i < Math.min(products.length, maxResults); i++) {{
+                            const product = products[i];
+                            
+                            // Extraire le titre
+                            let title = '';
+                            const titleSelectors = [
+                                'a.item-title', '.item-title', 
+                                'img[alt]', 'a[title]', 
+                                'a.item-img', '.item-info a'
+                            ];
+                            for (const selector of titleSelectors) {{
+                                const titleElem = product.querySelector(selector);
+                                if (titleElem) {{
+                                    title = (
+                                        titleElem.getAttribute('title') || 
+                                        titleElem.getAttribute('alt') || 
+                                        titleElem.textContent || 
+                                        ''
+                                    ).trim();
+                                    if (title) break;
+                                }}
+                            }}
+                            
+                            // Extraire le prix
+                            let price = null;
+                            const priceSelectors = [
+                                'li.price-current', '.price-current',
+                                '.price', 'ul.price li',
+                                '[class*="price-current"]', 
+                                'strong.price-current', '.price-box'
+                            ];
+                            
+                            for (const selector of priceSelectors) {{
+                                const priceElem = product.querySelector(selector);
+                                if (priceElem) {{
+                                    const priceText = (priceElem.textContent || priceElem.innerText || '').trim();
+                                    const matches = priceText.matchAll(/[\\d,]+\.?\\d*/g);
+                                    for (const match of matches) {{
+                                        const testPrice = parseFloat(match[0].replace(/,/g, ''));
+                                        if (testPrice > 1 && testPrice < 100000) {{
+                                            price = testPrice;
+                                            break;
+                                        }}
+                                    }}
+                                    if (price) break;
+                                }}
+                            }}
+                            
+                            // Si pas trouvé, chercher dans tout le texte
+                            if (!price || price <= 0) {{
+                                const allText = product.textContent || '';
+                                const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\.?\\d*)/g);
+                                for (const match of priceMatches) {{
+                                    const testPrice = parseFloat(match[1].replace(/,/g, ''));
+                                    if (testPrice > 1 && testPrice < 100000) {{
                                         price = testPrice;
                                         break;
-                                    }
-                                }
-                                if (price) break;
-                            }
-                        }
+                                    }}
+                                }}
+                            }}
+                            
+                            // Extraire l'URL - IMPORTANT: chercher un lien direct vers le produit
+                            let url = '';
+                            const linkSelectors = [
+                                'a.item-title', 
+                                'a[href*="/p/"]', 
+                                'a[href*="/Product"]',
+                                'a.item-img',
+                                'a[href]'
+                            ];
+                            for (const selector of linkSelectors) {{
+                                const linkElem = product.querySelector(selector);
+                                if (linkElem) {{
+                                    url = linkElem.getAttribute('href') || '';
+                                    // S'assurer que c'est un lien direct, pas une page de recherche
+                                    if (url && !url.includes('p/pl') && !url.includes('Search')) {{
+                                        break;
+                                    }}
+                                }}
+                            }}
+                            
+                            if (title && price && price > 0) {{
+                                results.push({{ title, price, url }});
+                            }}
+                        }}
                         
-                        // Si pas trouvé, chercher dans tout le texte du produit
-                        if (!price || price <= 0) {
-                            const allText = product.textContent || '';
-                            // Chercher tous les prix et prendre le premier valide
-                            const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\.?\\d*)/g);
-                            for (const match of priceMatches) {
-                                const testPrice = parseFloat(match[1].replace(/,/g, ''));
-                                if (testPrice > 1 && testPrice < 100000) {
-                                    price = testPrice;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // Extraire l'URL
-                        let url = '';
-                        const linkSelectors = [
-                            'a.item-title', 
-                            'a[href*="/p/"]', 
-                            'a[href*="/Product"]',
-                            'a.item-img',
-                            'a[href]'
-                        ];
-                        for (const selector of linkSelectors) {
-                            const linkElem = product.querySelector(selector);
-                            if (linkElem) {
-                                url = linkElem.getAttribute('href') || '';
-                                if (url) break;
-                            }
-                        }
-                        
-                        return { title, price, url };
-                    }
+                        return results;
+                    }}
                 """)
                 
-                if js_result and js_result.get('price') and js_result['price'] > 0:
-                    url = js_result.get('url', '')
-                    if url and not url.startswith('http'):
-                        url = f"https://www.newegg.ca{url}"
+                if js_results and len(js_results) > 0:
+                    products_list = []
+                    for result in js_results:
+                        url = result.get('url', '')
+                        # S'assurer que l'URL est complète et directe
+                        if url:
+                            if not url.startswith('http'):
+                                url = f"https://www.newegg.ca{url}"
+                            # Vérifier que ce n'est pas une page de recherche
+                            if 'p/pl' in url or 'Search' in url:
+                                continue
+                        else:
+                            url = search_url  # Fallback si pas de lien direct
+                        
+                        products_list.append({
+                            "title": result.get('title', 'Produit Newegg'),
+                            "price": result['price'],
+                            "url": url
+                        })
                     
-                    return {
-                        "title": js_result.get('title', 'Produit Newegg'),
-                        "price": js_result['price'],
-                        "url": url or search_url
-                    }
+                    if products_list:
+                        return products_list
             except Exception as e:
                 logger.debug(f"Erreur extraction JS Newegg: {e}")
             
-            # Fallback: BeautifulSoup
+            # Fallback: BeautifulSoup - chercher plusieurs produits
             html = await self.page.content()
             soup = BeautifulSoup(html, 'lxml')
             
-            # Chercher le premier produit
-            product_elem = None
+            # Chercher tous les produits
+            product_elems = []
             selectors = [
                 'div.item-cell',
                 'div.item-container',
@@ -1522,12 +1588,15 @@ class NeweggScraper:
             ]
             
             for selector in selectors:
-                product_elem = soup.select_one(selector)
-                if product_elem:
+                product_elems = soup.select(selector)
+                if product_elems:
                     break
             
-            if not product_elem:
-                return None
+            if not product_elems:
+                return []
+            
+            products_list = []
+            for product_elem in product_elems[:max_results]:
             
             # Extraire le titre
             title = None
@@ -1572,38 +1641,53 @@ class NeweggScraper:
                     if price:
                         break
             
-            # Si pas trouvé, chercher dans tout le texte
-            if not price:
-                all_text = product_elem.get_text()
-                # Chercher tous les prix et prendre le premier valide
-                price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
-                for match in price_matches:
-                    try:
-                        test_price = float(match.replace(',', ''))
-                        if 1 < test_price < 100000:
-                            price = test_price
-                            break
-                    except ValueError:
-                        continue
+                # Si pas trouvé, chercher dans tout le texte
+                if not price:
+                    all_text = product_elem.get_text()
+                    # Chercher tous les prix et prendre le premier valide
+                    price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
+                    for match in price_matches:
+                        try:
+                            test_price = float(match.replace(',', ''))
+                            if 1 < test_price < 100000:
+                                price = test_price
+                                break
+                        except ValueError:
+                            continue
+                
+                if not price or price <= 0:
+                    continue
+                
+                # Extraire l'URL
+                url_elem = product_elem.select_one('a.item-title, a[href*="/p/"]')
+                url = url_elem.get('href') if url_elem else None
+                if url and not url.startswith('http'):
+                    url = f"https://www.newegg.ca{url}"
+                
+                # S'assurer que l'URL est un lien direct, pas une page de recherche
+                if url and ('p/pl' in url or 'Search' in url):
+                    # Essayer de trouver un meilleur lien
+                    better_link = product_elem.select_one('a.item-title, a[href*="/p/"]')
+                    if better_link and better_link.get('href'):
+                        better_url = better_link.get('href')
+                        if not better_url.startswith('http'):
+                            better_url = f"https://www.newegg.ca{better_url}"
+                        if 'p/pl' not in better_url and 'Search' not in better_url:
+                            url = better_url
+                
+                if not url or 'p/pl' in url or 'Search' in url:
+                    url = search_url  # Fallback
+                
+                products_list.append({
+                    "title": title,
+                    "price": price,
+                    "url": url
+                })
             
-            # Extraire l'URL
-            url_elem = product_elem.select_one('a.item-title, a[href*="/p/"]')
-            url = url_elem.get('href') if url_elem else None
-            if url and not url.startswith('http'):
-                url = f"https://www.newegg.ca{url}"
-            
-            if not price or price <= 0:
-                logger.warning(f"Prix non trouvé pour '{search_query}' sur Newegg")
-                return None
-            
-            return {
-                "title": title,
-                "price": price,
-                "url": url or search_url
-            }
+            return products_list
         except Exception as e:
             logger.error(f"Erreur lors de la recherche Newegg: {e}")
-            return None
+            return []
 
 
 # Marques connues pour les composants PC (filtre qualité)
@@ -1962,28 +2046,34 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception as e:
             logger.error(f"Erreur recherche Amazon: {e}")
         
-        # Canada Computers
+        # Canada Computers - retourne une liste de produits
+        cc_results = []
         try:
-            cc_result = await canadacomputers_scraper.search_product(search_query)
+            cc_results = await canadacomputers_scraper.search_products(search_query, max_results=3)
         except Exception as e:
             logger.error(f"Erreur recherche Canada Computers: {e}")
         
-        # Newegg
+        # Newegg - retourne une liste de produits
+        newegg_results = []
         try:
-            newegg_result = await newegg_scraper.search_product(search_query)
+            newegg_results = await newegg_scraper.search_products(search_query, max_results=3)
         except Exception as e:
             logger.error(f"Erreur recherche Newegg: {e}")
         
-        # Déterminer le meilleur prix
-        prices = []
+        # Collecter tous les prix pour trouver le meilleur
+        all_prices = []
         if amazon_result and amazon_result.get("price"):
-            prices.append(("Amazon.ca", amazon_result["price"], amazon_result.get("url", "")))
-        if cc_result and cc_result.get("price"):
-            prices.append(("Canada Computers", cc_result["price"], cc_result.get("url", "")))
-        if newegg_result and newegg_result.get("price"):
-            prices.append(("Newegg.ca", newegg_result["price"], newegg_result.get("url", "")))
+            all_prices.append(("Amazon.ca", amazon_result["price"], amazon_result.get("url", ""), amazon_result.get("title", product_name)))
         
-        if not prices:
+        for cc_product in cc_results:
+            if cc_product.get("price"):
+                all_prices.append(("Canada Computers", cc_product["price"], cc_product.get("url", ""), cc_product.get("title", product_name)))
+        
+        for newegg_product in newegg_results:
+            if newegg_product.get("price"):
+                all_prices.append(("Newegg.ca", newegg_product["price"], newegg_product.get("url", ""), newegg_product.get("title", product_name)))
+        
+        if not all_prices:
             await update.message.reply_text(
                 f"❌ Aucun produit trouvé pour '{product_name}' sur les 3 sites.\n\n"
                 "**Suggestions :**\n"
@@ -1994,26 +2084,61 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         
         # Trier par prix
-        prices.sort(key=lambda x: x[1])
-        best_site, best_price, best_url = prices[0]
+        all_prices.sort(key=lambda x: x[1])
+        best_site, best_price, best_url, best_title = all_prices[0]
         
-        # Sauvegarder dans la base de données
+        # Sauvegarder dans la base de données (garder le meilleur de chaque site)
         db.add_user(user_id, username)
         comparison_id = db.add_price_comparison(user_id, product_name, search_query)
+        
+        # Trouver le meilleur prix de chaque site pour la DB
+        amazon_best = amazon_result if amazon_result and amazon_result.get("price") else None
+        cc_best = min(cc_results, key=lambda x: x.get("price", float('inf'))) if cc_results else None
+        newegg_best = min(newegg_results, key=lambda x: x.get("price", float('inf'))) if newegg_results else None
+        
         db.update_price_comparison(
             comparison_id,
-            amazon_price=amazon_result.get("price") if amazon_result else None,
-            amazon_url=amazon_result.get("url") if amazon_result else None,
-            canadacomputers_price=cc_result.get("price") if cc_result else None,
-            canadacomputers_url=cc_result.get("url") if cc_result else None,
-            newegg_price=newegg_result.get("price") if newegg_result else None,
-            newegg_url=newegg_result.get("url") if newegg_result else None
+            amazon_price=amazon_best.get("price") if amazon_best else None,
+            amazon_url=amazon_best.get("url") if amazon_best else None,
+            canadacomputers_price=cc_best.get("price") if cc_best else None,
+            canadacomputers_url=cc_best.get("url") if cc_best else None,
+            newegg_price=newegg_best.get("price") if newegg_best else None,
+            newegg_url=newegg_best.get("url") if newegg_best else None
         )
         
-        # Construire le message de comparaison
+        # Construire le message de comparaison avec tous les produits
         message = f"📊 **Comparaison de prix pour : {product_name}**\n\n"
+        message += f"🏆 **Meilleur prix : {best_site} - ${best_price:.2f} CAD**\n"
+        message += f"🔗 {best_url}\n\n"
         
-        for site_name, price, url in prices:
+        # Afficher Amazon
+        if amazon_result and amazon_result.get("price"):
+            message += f"**🛒 Amazon.ca**\n"
+            message += f"💰 ${amazon_result['price']:.2f} CAD\n"
+            message += f"📦 {amazon_result.get('title', product_name)}\n"
+            message += f"🔗 {amazon_result.get('url', '')}\n\n"
+        
+        # Afficher tous les produits Canada Computers
+        if cc_results:
+            message += f"**🛒 Canada Computers** ({len(cc_results)} produit{'s' if len(cc_results) > 1 else ''})\n"
+            for i, cc_product in enumerate(cc_results, 1):
+                message += f"{i}. 💰 ${cc_product['price']:.2f} CAD\n"
+                message += f"   📦 {cc_product.get('title', product_name)}\n"
+                message += f"   🔗 {cc_product.get('url', '')}\n"
+            message += "\n"
+        
+        # Afficher tous les produits Newegg
+        if newegg_results:
+            message += f"**🛒 Newegg.ca** ({len(newegg_results)} produit{'s' if len(newegg_results) > 1 else ''})\n"
+            for i, newegg_product in enumerate(newegg_results, 1):
+                message += f"{i}. 💰 ${newegg_product['price']:.2f} CAD\n"
+                message += f"   📦 {newegg_product.get('title', product_name)}\n"
+                message += f"   🔗 {newegg_product.get('url', '')}\n"
+            message += "\n"
+        
+        message += f"✅ Comparaison sauvegardée. Mise à jour automatique toutes les 60 minutes."
+        
+        for site_name, price, url, title in all_prices:
             if site_name == best_site:
                 message += f"🏆 **{site_name}: ${price:.2f} CAD** (MEILLEUR PRIX)\n"
             else:
@@ -3254,8 +3379,8 @@ def check_price_comparisons(app: Application) -> None:
                 
                 # Rechercher sur les 3 sites
                 amazon_result = None
-                cc_result = None
-                newegg_result = None
+                cc_results = []
+                newegg_results = []
                 
                 # Amazon
                 try:
@@ -3271,21 +3396,25 @@ def check_price_comparisons(app: Application) -> None:
                 except Exception as e:
                     logger.error(f"Erreur recherche Amazon pour '{product_name}': {e}")
                 
-                # Canada Computers
+                # Canada Computers - récupérer plusieurs produits et prendre le meilleur
                 try:
-                    cc_result = loop.run_until_complete(
-                        canadacomputers_scraper.search_product(search_query)
+                    cc_results = loop.run_until_complete(
+                        canadacomputers_scraper.search_products(search_query, max_results=3)
                     )
+                    cc_result = min(cc_results, key=lambda x: x.get("price", float('inf'))) if cc_results else None
                 except Exception as e:
                     logger.error(f"Erreur recherche Canada Computers pour '{product_name}': {e}")
+                    cc_result = None
                 
-                # Newegg
+                # Newegg - récupérer plusieurs produits et prendre le meilleur
                 try:
-                    newegg_result = loop.run_until_complete(
-                        newegg_scraper.search_product(search_query)
+                    newegg_results = loop.run_until_complete(
+                        newegg_scraper.search_products(search_query, max_results=3)
                     )
+                    newegg_result = min(newegg_results, key=lambda x: x.get("price", float('inf'))) if newegg_results else None
                 except Exception as e:
                     logger.error(f"Erreur recherche Newegg pour '{product_name}': {e}")
+                    newegg_result = None
                 
                 # Mettre à jour la base de données
                 db.update_price_comparison(
