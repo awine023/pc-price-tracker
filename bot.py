@@ -1173,7 +1173,7 @@ class CanadaComputersScraper:
                             
                             // Chercher "Member Price:" d'abord
                             const memberPriceText = product.textContent || '';
-                            const memberPriceMatch = memberPriceText.match(/Member Price:\\s*\\$?([\\d,]+\.?\\d*)/i);
+                            const memberPriceMatch = memberPriceText.match(/Member Price:\\s*\\$?([\\d,]+\\\\.?\\d*)/i);
                             if (memberPriceMatch) {{
                                 price = parseFloat(memberPriceMatch[1].replace(/,/g, ''));
                             }}
@@ -1495,7 +1495,7 @@ class NeweggScraper:
                                 const priceElem = product.querySelector(selector);
                                 if (priceElem) {{
                                     const priceText = (priceElem.textContent || priceElem.innerText || '').trim();
-                                    const matches = priceText.matchAll(/[\\d,]+\.?\\d*/g);
+                                    const matches = priceText.matchAll(/[\\d,]+\\\\.?\\d*/g);
                                     for (const match of matches) {{
                                         const testPrice = parseFloat(match[0].replace(/,/g, ''));
                                         if (testPrice > 1 && testPrice < 100000) {{
