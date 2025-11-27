@@ -1380,6 +1380,327 @@ class NeweggScraper:
             return []
 
 
+class MemoryExpressScraper:
+    """Scraper pour Memory Express Canada."""
+    
+    def __init__(self):
+        self.playwright: Optional[Playwright] = None
+        self.browser: Optional[Browser] = None
+        self.page: Optional[Page] = None
+    
+    async def init_browser(self):
+        """Initialise le navigateur Playwright."""
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-blink-features=AutomationControlled']
+            )
+            context = await self.browser.new_context(
+                user_agent=random.choice(USER_AGENTS),
+                viewport={'width': 1920, 'height': 1080},
+                locale='en-CA',
+            )
+            self.page = await context.new_page()
+        except Exception as e:
+            logger.error(f"Erreur lors de l'initialisation du navigateur Memory Express: {e}")
+    
+    async def close_browser(self):
+        """Ferme le navigateur."""
+        try:
+            if self.page:
+                await self.page.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+        except:
+            pass
+        self.page = None
+        self.browser = None
+        self.playwright = None
+    
+    async def search_products(self, search_query: str, max_results: int = 3) -> List[Dict]:
+        """Recherche des produits sur Memory Express et retourne plusieurs résultats."""
+        try:
+            if not self.page or not self.browser:
+                await self.init_browser()
+            
+            search_url = f"https://www.memoryexpress.com/Search/{search_query.replace(' ', '%20')}"
+            
+            await self.page.goto(search_url, wait_until='networkidle', timeout=30000)
+            await asyncio.sleep(random.uniform(3, 5))
+            
+            # Essayer d'extraire avec JavaScript d'abord (plus fiable)
+            try:
+                js_results = await self.page.evaluate(f"""
+                    () => {{
+                        const maxResults = {max_results};
+                        const results = [];
+                        
+                        // Chercher tous les produits dans les résultats de recherche
+                        let products = document.querySelectorAll('.c-product-tile, .product-tile, .product-item, [data-product-id], article.product, div[class*="product"], .product-card, .search-result-item');
+                        
+                        if (products.length === 0) {{
+                            products = document.querySelectorAll('[class*="product"], [class*="tile"], [class*="item"]');
+                        }}
+                        
+                        for (let i = 0; i < Math.min(products.length, maxResults); i++) {{
+                            const product = products[i];
+                            
+                            // Extraire le titre
+                            let title = '';
+                            const titleSelectors = [
+                                'a[title]', 'h2 a', 'h3 a', '.product-name', 
+                                '.product-title', '[class*="title"]', 'a.product-name', 'h2', 'h3'
+                            ];
+                            for (const selector of titleSelectors) {{
+                                const titleElem = product.querySelector(selector);
+                                if (titleElem) {{
+                                    title = (titleElem.getAttribute('title') || titleElem.textContent || '').trim();
+                                    if (title) break;
+                                }}
+                            }}
+                            
+                            // Extraire le prix
+                            let price = null;
+                            const priceSelectors = [
+                                '.price', '.product-price', '.price-current', 
+                                '.price-regular', '[class*="price"]', 
+                                'strong.price', 'span.price', '.price-box',
+                                '.c-price', '.product-price-box'
+                            ];
+                            
+                            for (const selector of priceSelectors) {{
+                                const priceElems = product.querySelectorAll(selector);
+                                for (const priceElem of priceElems) {{
+                                    const priceText = (priceElem.textContent || priceElem.innerText || '').trim();
+                                    const match = priceText.match(/\\$?\\s*(?:CAD\\s*)?([\\d,]+\\\\.?\\d*)/i);
+                                    if (match) {{
+                                        const testPrice = parseFloat(match[1].replace(/,/g, ''));
+                                        if (testPrice > 0 && testPrice < 100000) {{
+                                            price = testPrice;
+                                            break;
+                                        }}
+                                    }}
+                                }}
+                                if (price) break;
+                            }}
+                            
+                            // Si toujours pas trouvé, chercher dans tout le texte
+                            if (!price || price <= 0) {{
+                                const allText = product.textContent || '';
+                                const priceMatches = allText.matchAll(/\\$?\\s*(?:CAD\\s*)?([\\d,]+\\\\.?\\d*)/gi);
+                                for (const match of priceMatches) {{
+                                    const testPrice = parseFloat(match[1].replace(/,/g, ''));
+                                    if (testPrice > 1 && testPrice < 100000) {{
+                                        price = testPrice;
+                                        break;
+                                    }}
+                                }}
+                            }}
+                            
+                            // Extraire l'URL
+                            let url = '';
+                            const linkSelectors = [
+                                'a[href*="/Products/"]', 
+                                'a[href*="/Product/"]',
+                                'a[href*="/products/"]',
+                                'a.product-link',
+                                'a[title]',
+                                'h2 a', 'h3 a',
+                                'a[href]'
+                            ];
+                            
+                            for (const selector of linkSelectors) {{
+                                const linkElems = product.querySelectorAll(selector);
+                                for (const linkElem of linkElems) {{
+                                    const href = linkElem.getAttribute('href') || '';
+                                    if (href && 
+                                        !href.includes('Search') && 
+                                        !href.includes('search') &&
+                                        !href.includes('javascript:') &&
+                                        (href.includes('/Products/') || href.includes('/Product/'))) {{
+                                        url = href;
+                                        break;
+                                    }}
+                                }}
+                                if (url) break;
+                            }}
+                            
+                            if (!url) {{
+                                const allLinks = product.querySelectorAll('a[href]');
+                                for (const link of allLinks) {{
+                                    const href = link.getAttribute('href') || '';
+                                    if (href && 
+                                        !href.includes('Search') && 
+                                        !href.includes('search') &&
+                                        !href.includes('javascript:') &&
+                                        (href.startsWith('/') || href.startsWith('http'))) {{
+                                        url = href;
+                                        break;
+                                    }}
+                                }}
+                            }}
+                            
+                            if (title && price && price > 0) {{
+                                results.push({{ title, price, url }});
+                            }}
+                        }}
+                        
+                        return results;
+                    }}
+                """)
+                
+                if js_results and len(js_results) > 0:
+                    products_list = []
+                    for result in js_results:
+                        url = result.get('url', '')
+                        if url:
+                            if not url.startswith('http'):
+                                url = f"https://www.memoryexpress.com{url}"
+                            if 'Search' in url or 'search' in url:
+                                continue
+                        else:
+                            url = search_url
+                        
+                        products_list.append({
+                            "title": result.get('title', 'Produit Memory Express'),
+                            "price": result['price'],
+                            "url": url
+                        })
+                    
+                    if products_list:
+                        return products_list
+            except Exception as e:
+                logger.debug(f"Erreur extraction JS Memory Express: {e}")
+            
+            # Fallback: BeautifulSoup
+            html = await self.page.content()
+            soup = BeautifulSoup(html, 'lxml')
+            
+            product_elems = []
+            selectors = [
+                'div.c-product-tile',
+                'div.product-tile',
+                'div.product-item',
+                'div[class*="product"]',
+                'article.product',
+                '.product-card',
+                '.search-result-item'
+            ]
+            
+            for selector in selectors:
+                product_elems = soup.select(selector)
+                if product_elems:
+                    logger.debug(f"Trouvé {len(product_elems)} produits Memory Express avec le sélecteur: {selector}")
+                    break
+            
+            if not product_elems:
+                return []
+            
+            products_list = []
+            for product_elem in product_elems[:max_results]:
+                # Extraire le titre
+                title = None
+                title_selectors = ['a[title]', 'h2', 'h3', '.product-name', '.product-title', '[class*="title"]', 'a']
+                for selector in title_selectors:
+                    title_elem = product_elem.select_one(selector)
+                    if title_elem:
+                        title = title_elem.get('title') or title_elem.get_text(strip=True)
+                        if title:
+                            break
+                
+                if not title:
+                    title = "Produit Memory Express"
+                
+                # Extraire le prix
+                price = None
+                price_selectors = [
+                    '.price', '.product-price', '.price-current',
+                    '.price-regular', 'strong.price', 'span.price', 
+                    '[class*="price"]', '.c-price', '.price-box'
+                ]
+                
+                for selector in price_selectors:
+                    price_elem = product_elem.select_one(selector)
+                    if price_elem:
+                        price_text = price_elem.get_text(strip=True)
+                        price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_text)
+                        if price_match:
+                            try:
+                                test_price = float(price_match.group(1).replace(',', ''))
+                                if 1 < test_price < 100000:
+                                    price = test_price
+                                    break
+                            except ValueError:
+                                continue
+                
+                if not price:
+                    all_text = product_elem.get_text()
+                    price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
+                    for match in price_matches:
+                        try:
+                            test_price = float(match.replace(',', ''))
+                            if 1 < test_price < 100000:
+                                price = test_price
+                                break
+                        except ValueError:
+                            continue
+                
+                if not price or price <= 0:
+                    continue
+                
+                # Extraire l'URL
+                url = None
+                url_selectors = [
+                    'a[href*="/Products/"]',
+                    'a[href*="/Product/"]',
+                    'a.product-link',
+                    'h2 a', 'h3 a',
+                    'a[title]',
+                    'a[href]'
+                ]
+                
+                for selector in url_selectors:
+                    url_elems = product_elem.select(selector)
+                    for url_elem in url_elems:
+                        href = url_elem.get('href')
+                        if href and not href.startswith('javascript:'):
+                            if ('/Products/' in href or '/Product/' in href) and \
+                               'Search' not in href and 'search' not in href:
+                                url = href
+                                break
+                    if url:
+                        break
+                
+                if not url:
+                    all_links = product_elem.select('a[href]')
+                    for link in all_links:
+                        href = link.get('href')
+                        if href and not href.startswith('javascript:') and \
+                           'Search' not in href and 'search' not in href:
+                            url = href
+                            break
+                
+                if url:
+                    if not url.startswith('http'):
+                        url = f"https://www.memoryexpress.com{url}"
+                else:
+                    url = search_url
+                
+                products_list.append({
+                    "title": title,
+                    "price": price,
+                    "url": url
+                })
+            
+            return products_list
+        except Exception as e:
+            logger.error(f"Erreur lors de la recherche Memory Express: {e}")
+            return []
+
+
 # Marques connues pour les composants PC (filtre qualité)
 KNOWN_BRANDS = {
     # Cartes graphiques
@@ -1405,6 +1726,7 @@ KNOWN_BRANDS = {
 # Instances globales des scrapers
 amazon_scraper = AmazonScraper()
 newegg_scraper = NeweggScraper()
+memoryexpress_scraper = MemoryExpressScraper()
 
 # Instance globale de l'analyseur de prix
 price_analyzer = PriceAnalyzer(
@@ -1687,7 +2009,7 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Commande /compare - Compare les prix d'un produit sur Amazon, Canada Computers et Newegg."""
+    """Commande /compare - Compare les prix d'un produit sur Amazon, Newegg et Memory Express."""
     user_id = str(update.effective_user.id)
     username = update.effective_user.username or "Inconnu"
     
@@ -1700,7 +2022,8 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "/compare Samsung 980 Pro 1TB\n\n"
             "Le bot comparera automatiquement les prix toutes les 60 minutes sur :\n"
             "🛒 Amazon.ca\n"
-            "🛒 Newegg.ca"
+            "🛒 Newegg.ca\n"
+            "🛒 Memory Express"
         )
         return
     
@@ -1741,6 +2064,13 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception as e:
             logger.error(f"Erreur recherche Newegg: {e}")
         
+        # Memory Express - retourne une liste de produits
+        memoryexpress_results = []
+        try:
+            memoryexpress_results = await memoryexpress_scraper.search_products(search_query, max_results=3)
+        except Exception as e:
+            logger.error(f"Erreur recherche Memory Express: {e}")
+        
         # Collecter tous les prix pour trouver le meilleur
         all_prices = []
         if amazon_result and amazon_result.get("price"):
@@ -1749,6 +2079,10 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         for newegg_product in newegg_results:
             if newegg_product.get("price"):
                 all_prices.append(("Newegg.ca", newegg_product["price"], newegg_product.get("url", ""), newegg_product.get("title", product_name)))
+        
+        for me_product in memoryexpress_results:
+            if me_product.get("price"):
+                all_prices.append(("Memory Express", me_product["price"], me_product.get("url", ""), me_product.get("title", product_name)))
         
         if not all_prices:
             await update.message.reply_text(
@@ -1771,6 +2105,7 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Trouver le meilleur prix de chaque site pour la DB
         amazon_best = amazon_result if amazon_result and amazon_result.get("price") else None
         newegg_best = min(newegg_results, key=lambda x: x.get("price", float('inf'))) if newegg_results else None
+        memoryexpress_best = min(memoryexpress_results, key=lambda x: x.get("price", float('inf'))) if memoryexpress_results else None
         
         db.update_price_comparison(
             comparison_id,
@@ -1779,7 +2114,9 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             canadacomputers_price=None,
             canadacomputers_url=None,
             newegg_price=newegg_best.get("price") if newegg_best else None,
-            newegg_url=newegg_best.get("url") if newegg_best else None
+            newegg_url=newegg_best.get("url") if newegg_best else None,
+            memoryexpress_price=memoryexpress_best.get("price") if memoryexpress_best else None,
+            memoryexpress_url=memoryexpress_best.get("url") if memoryexpress_best else None
         )
         
         # Construire le message de comparaison avec tous les produits
@@ -1801,6 +2138,15 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 message += f"{i}. 💰 ${newegg_product['price']:.2f} CAD\n"
                 message += f"   📦 {newegg_product.get('title', product_name)}\n"
                 message += f"   🔗 {newegg_product.get('url', '')}\n"
+            message += "\n"
+        
+        # Afficher tous les produits Memory Express
+        if memoryexpress_results:
+            message += f"**🛒 Memory Express** ({len(memoryexpress_results)} produit{'s' if len(memoryexpress_results) > 1 else ''})\n"
+            for i, me_product in enumerate(memoryexpress_results, 1):
+                message += f"{i}. 💰 ${me_product['price']:.2f} CAD\n"
+                message += f"   📦 {me_product.get('title', product_name)}\n"
+                message += f"   🔗 {me_product.get('url', '')}\n"
             message += "\n"
         
         message += f"✅ Comparaison sauvegardée. Mise à jour automatique toutes les 60 minutes."
@@ -2550,7 +2896,7 @@ Le bot surveille tous les produits en rabais dans la catégorie et vous alerte p
 🔧 Processeurs: Ryzen 7 et 9 uniquement (pas de Ryzen 5)
 
 **Comparaison de prix multi-sites :**
-🛒 /compare - Compare automatiquement les prix sur Amazon.ca et Newegg.ca
+🛒 /compare - Compare automatiquement les prix sur Amazon.ca, Newegg.ca et Memory Express
 ⏰ Vérification automatique toutes les 60 minutes
 🎉 Alerte si un meilleur prix est trouvé
 
@@ -3070,6 +3416,16 @@ def check_price_comparisons(app: Application) -> None:
                     logger.error(f"Erreur recherche Newegg pour '{product_name}': {e}")
                     newegg_result = None
                 
+                # Memory Express - récupérer plusieurs produits et prendre le meilleur
+                try:
+                    memoryexpress_results = loop.run_until_complete(
+                        memoryexpress_scraper.search_products(search_query, max_results=3)
+                    )
+                    memoryexpress_result = min(memoryexpress_results, key=lambda x: x.get("price", float('inf'))) if memoryexpress_results else None
+                except Exception as e:
+                    logger.error(f"Erreur recherche Memory Express pour '{product_name}': {e}")
+                    memoryexpress_result = None
+                
                 # Mettre à jour la base de données
                 db.update_price_comparison(
                     comparison_id,
@@ -3078,7 +3434,9 @@ def check_price_comparisons(app: Application) -> None:
                     canadacomputers_price=None,
                     canadacomputers_url=None,
                     newegg_price=newegg_result.get("price") if newegg_result else None,
-                    newegg_url=newegg_result.get("url") if newegg_result else None
+                    newegg_url=newegg_result.get("url") if newegg_result else None,
+                    memoryexpress_price=memoryexpress_result.get("price") if memoryexpress_result else None,
+                    memoryexpress_url=memoryexpress_result.get("url") if memoryexpress_result else None
                 )
                 
                 # Récupérer les prix mis à jour
@@ -3182,7 +3540,7 @@ def main() -> None:
     )
     logger.info(f"🌍 Scan global d'Amazon.ca programmé toutes les {GLOBAL_SCAN_INTERVAL_MINUTES} minutes")
     
-    # Job 3: Comparer les prix sur les 2 sites (Amazon, Newegg)
+    # Job 3: Comparer les prix sur les 3 sites (Amazon, Newegg, Memory Express)
     scheduler.add_job(
         check_price_comparisons,
         "interval",

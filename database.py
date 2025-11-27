@@ -154,6 +154,8 @@ class Database:
                 canadacomputers_url TEXT,
                 newegg_price REAL,
                 newegg_url TEXT,
+                memoryexpress_price REAL,
+                memoryexpress_url TEXT,
                 best_price REAL,
                 best_site TEXT,
                 last_check TIMESTAMP,
@@ -591,10 +593,21 @@ class Database:
     
     def update_price_comparison(self, comparison_id: int, amazon_price: float = None, amazon_url: str = None,
                                 canadacomputers_price: float = None, canadacomputers_url: str = None,
-                                newegg_price: float = None, newegg_url: str = None):
+                                newegg_price: float = None, newegg_url: str = None,
+                                memoryexpress_price: float = None, memoryexpress_url: str = None):
         """Met à jour les prix d'une comparaison."""
         conn = self.get_connection()
         cursor = conn.cursor()
+        
+        # Ajouter les colonnes si elles n'existent pas (migration)
+        try:
+            cursor.execute("ALTER TABLE price_comparisons ADD COLUMN memoryexpress_price REAL")
+        except sqlite3.OperationalError:
+            pass  # Colonne existe déjà
+        try:
+            cursor.execute("ALTER TABLE price_comparisons ADD COLUMN memoryexpress_url TEXT")
+        except sqlite3.OperationalError:
+            pass  # Colonne existe déjà
         
         # Déterminer le meilleur prix
         prices = []
@@ -604,6 +617,8 @@ class Database:
             prices.append(('canadacomputers', canadacomputers_price))
         if newegg_price:
             prices.append(('newegg', newegg_price))
+        if memoryexpress_price:
+            prices.append(('memoryexpress', memoryexpress_price))
         
         best_price = None
         best_site = None
@@ -618,12 +633,15 @@ class Database:
                 canadacomputers_url = COALESCE(?, canadacomputers_url),
                 newegg_price = COALESCE(?, newegg_price),
                 newegg_url = COALESCE(?, newegg_url),
+                memoryexpress_price = COALESCE(?, memoryexpress_price),
+                memoryexpress_url = COALESCE(?, memoryexpress_url),
                 best_price = ?,
                 best_site = ?,
                 last_check = CURRENT_TIMESTAMP
             WHERE id = ?
         """, (amazon_price, amazon_url, canadacomputers_price, canadacomputers_url,
-              newegg_price, newegg_url, best_price, best_site, comparison_id))
+              newegg_price, newegg_url, memoryexpress_price, memoryexpress_url,
+              best_price, best_site, comparison_id))
         conn.commit()
         conn.close()
     
