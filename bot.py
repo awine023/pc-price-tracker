@@ -1427,18 +1427,44 @@ class MemoryExpressScraper:
                 await self.init_browser()
             
             search_url = f"https://www.memoryexpress.com/Search/{search_query.replace(' ', '%20')}"
+            logger.info(f"🔍 Recherche Memory Express: {search_query}")
             
-            # Utiliser 'load' au lieu de 'networkidle' pour être plus rapide
-            await self.page.goto(search_url, wait_until='load', timeout=60000)
-            await asyncio.sleep(random.uniform(2, 4))
+            # Utiliser 'domcontentloaded' pour être plus rapide
+            try:
+                await self.page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
+            except Exception as e:
+                logger.warning(f"Timeout lors du chargement de Memory Express, tentative avec 'load': {e}")
+                try:
+                    await self.page.goto(search_url, wait_until='load', timeout=30000)
+                except:
+                    logger.error(f"Impossible de charger Memory Express: {e}")
+                    return []
+            
+            await asyncio.sleep(random.uniform(3, 5))
             
             # Attendre que les produits soient chargés (plusieurs sélecteurs possibles)
             try:
-                await self.page.wait_for_selector('.c-product-tile, .product-tile, .product-item, [class*="product"], .product-card, article', timeout=15000)
+                await self.page.wait_for_selector('.c-product-tile, .product-tile, .product-item, [class*="product"], .product-card, article, [data-product], .search-result', timeout=20000)
             except:
-                # Si les sélecteurs ne sont pas trouvés, continuer quand même
                 logger.debug("Sélecteurs de produits Memory Express non trouvés, continuation...")
-                # Attendre un peu plus pour que le contenu se charge
+                await asyncio.sleep(3)
+            
+            # Vérifier si la page a chargé correctement
+            page_title = await self.page.title()
+            logger.debug(f"Titre de la page Memory Express: {page_title}")
+            
+            # Vérifier s'il y a des résultats
+            has_results = await self.page.evaluate("""
+                () => {
+                    const products = document.querySelectorAll('.c-product-tile, .product-tile, .product-item, [class*="product"], .product-card, article, [data-product]');
+                    return products.length > 0;
+                }
+            """)
+            
+            if not has_results:
+                logger.warning("Aucun produit détecté sur la page Memory Express")
+                # Essayer de scroller pour charger plus de contenu
+                await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
                 await asyncio.sleep(2)
             
             # Essayer d'extraire avec JavaScript d'abord (plus fiable)
@@ -1449,11 +1475,20 @@ class MemoryExpressScraper:
                         const results = [];
                         
                         // Chercher tous les produits dans les résultats de recherche
-                        let products = document.querySelectorAll('.c-product-tile, .product-tile, .product-item, [data-product-id], article.product, div[class*="product"], .product-card, .search-result-item');
+                        // Memory Express utilise souvent des structures spécifiques
+                        let products = document.querySelectorAll(
+                            '.c-product-tile, .product-tile, .product-item, [data-product-id], article.product, ' +
+                            'div[class*="product"], .product-card, .search-result-item, [data-product], ' +
+                            '.product-list-item, .search-product, .c-product, [class*="ProductTile"], ' +
+                            '[class*="ProductCard"], [class*="product-card"], [class*="product-item"]'
+                        );
                         
                         if (products.length === 0) {{
-                            products = document.querySelectorAll('[class*="product"], [class*="tile"], [class*="item"]');
+                            // Recherche plus large
+                            products = document.querySelectorAll('[class*="product"], [class*="tile"], [class*="item"], [class*="card"]');
                         }}
+                        
+                        console.log(`Trouvé ${products.length} éléments potentiels de produits`);
                         
                         for (let i = 0; i < Math.min(products.length, maxResults); i++) {{
                             const product = products[i];
@@ -1472,19 +1507,22 @@ class MemoryExpressScraper:
                                 }}
                             }}
                             
-                            // Extraire le prix
+                            // Extraire le prix - Memory Express peut utiliser différents formats
                             let price = null;
                             const priceSelectors = [
                                 '.price', '.product-price', '.price-current', 
                                 '.price-regular', '[class*="price"]', 
                                 'strong.price', 'span.price', '.price-box',
-                                '.c-price', '.product-price-box'
+                                '.c-price', '.product-price-box', '.Price',
+                                '[class*="Price"]', '[data-price]', '.sale-price',
+                                '.regular-price', '.current-price', '.final-price'
                             ];
                             
                             for (const selector of priceSelectors) {{
                                 const priceElems = product.querySelectorAll(selector);
                                 for (const priceElem of priceElems) {{
                                     const priceText = (priceElem.textContent || priceElem.innerText || '').trim();
+                                    // Chercher plusieurs formats: $XX.XX, CAD $XX.XX, XX.XX, $XX,XX
                                     const match = priceText.match(/\\$?\\s*(?:CAD\\s*)?([\\d,]+\\\\.?\\d*)/i);
                                     if (match) {{
                                         const testPrice = parseFloat(match[1].replace(/,/g, ''));
@@ -1497,15 +1535,25 @@ class MemoryExpressScraper:
                                 if (price) break;
                             }}
                             
-                            // Si toujours pas trouvé, chercher dans tout le texte
+                            // Si toujours pas trouvé, chercher dans tout le texte du produit
                             if (!price || price <= 0) {{
-                                const allText = product.textContent || '';
+                                const allText = product.textContent || product.innerText || '';
+                                // Chercher tous les prix dans le texte
                                 const priceMatches = allText.matchAll(/\\$?\\s*(?:CAD\\s*)?([\\d,]+\\\\.?\\d*)/gi);
+                                const prices = [];
                                 for (const match of priceMatches) {{
                                     const testPrice = parseFloat(match[1].replace(/,/g, ''));
                                     if (testPrice > 1 && testPrice < 100000) {{
-                                        price = testPrice;
-                                        break;
+                                        prices.push(testPrice);
+                                    }}
+                                }}
+                                // Prendre le prix le plus élevé qui semble être un prix de produit (pas un numéro de série)
+                                if (prices.length > 0) {{
+                                    prices.sort((a, b) => b - a);
+                                    // Filtrer les prix qui semblent raisonnables (entre 10 et 10000 CAD)
+                                    const reasonablePrices = prices.filter(p => p >= 10 && p <= 10000);
+                                    if (reasonablePrices.length > 0) {{
+                                        price = reasonablePrices[0];
                                     }}
                                 }}
                             }}
@@ -1565,25 +1613,40 @@ class MemoryExpressScraper:
                 if js_results and len(js_results) > 0:
                     products_list = []
                     for result in js_results:
-                        url = result.get('url', '')
+                        title = result.get('title', '').strip()
+                        price = result.get('price')
+                        url = result.get('url', '').strip()
+                        
+                        # Valider les données
+                        if not title or not price or price <= 0:
+                            logger.debug(f"Produit Memory Express invalide: title={title}, price={price}")
+                            continue
+                        
                         if url:
                             if not url.startswith('http'):
                                 url = f"https://www.memoryexpress.com{url}"
                             if 'Search' in url or 'search' in url:
+                                # Essayer de trouver un meilleur lien
                                 continue
                         else:
                             url = search_url
                         
                         products_list.append({
-                            "title": result.get('title', 'Produit Memory Express'),
-                            "price": result['price'],
+                            "title": title,
+                            "price": float(price),
                             "url": url
                         })
+                        logger.info(f"✅ Produit Memory Express trouvé: {title} - ${price:.2f}")
                     
                     if products_list:
+                        logger.info(f"✅ {len(products_list)} produit(s) Memory Express trouvé(s)")
                         return products_list
+                    else:
+                        logger.warning("Aucun produit valide extrait par JavaScript")
             except Exception as e:
-                logger.debug(f"Erreur extraction JS Memory Express: {e}")
+                logger.error(f"Erreur extraction JS Memory Express: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
             
             # Fallback: BeautifulSoup
             html = await self.page.content()
