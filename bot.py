@@ -2421,6 +2421,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 /start - Message d'accueil
 /add [lien ou ASIN] - Ajouter un produit à surveiller
 /category [nom] - Surveiller une catégorie entière
+/compare [produit] - Comparer les prix sur Amazon, Canada Computers et Newegg
 /list - Voir tous vos produits et catégories surveillés
 /delete [ASIN] - Supprimer un produit
 /history [numéro ou ASIN] - Voir l'historique des prix (choisir depuis votre liste ou ASIN)
@@ -2435,6 +2436,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 /add https://www.amazon.ca/dp/B08N5WRWNW
 /category carte graphique
 /category processeur AMD
+/compare RTX 4070
+/compare Ryzen 7 7800X3D
 /delete B08N5WRWNW
 /settings bigdiscount 40
 
@@ -2445,6 +2448,11 @@ Le bot surveille tous les produits en rabais dans la catégorie et vous alerte p
 ⭐ Note: 4+ étoiles uniquement
 🏷️ Marques connues uniquement (NVIDIA, AMD, ASUS, MSI, Corsair, Samsung, etc.)
 🔧 Processeurs: Ryzen 7 et 9 uniquement (pas de Ryzen 5)
+
+**Comparaison de prix multi-sites :**
+🛒 /compare - Compare automatiquement les prix sur Amazon.ca, Canada Computers et Newegg.ca
+⏰ Vérification automatique toutes les 60 minutes
+🎉 Alerte si un meilleur prix est trouvé
 
 **Détection intelligente :**
 🔥 Gros rabais: Alerte automatique pour rabais >{BIG_DISCOUNT_THRESHOLD}%
