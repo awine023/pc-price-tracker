@@ -1557,14 +1557,20 @@ class MemoryExpressScraper:
                             console.log(`Tentative 3: ${allLinks.length} liens produits trouvés`);
                             // Créer des conteneurs virtuels pour ces liens
                             if (allLinks.length > 0) {{
-                                products = Array.from(allLinks).map(link => {{
+                                const productContainers = Array.from(allLinks).map(link => {{
                                     let parent = link.closest('div, article, section, li');
                                     return parent || link.parentElement;
                                 }});
+                                products = productContainers;
                             }}
                         }}
                         
-                        console.log(`Total: ${products.length} éléments potentiels de produits`);
+                        console.log(`Total: ${products ? products.length : 0} éléments potentiels de produits`);
+                        
+                        if (!products || products.length === 0) {{
+                            console.log('Aucun produit trouvé');
+                            return [];
+                        }}
                         
                         for (let i = 0; i < Math.min(products.length, maxResults); i++) {{
                             const product = products[i];
