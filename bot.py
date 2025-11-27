@@ -1206,14 +1206,18 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Commande /list - Liste tous les produits et catégories surveillés."""
+    """Commande /list - Liste tous les produits, catégories, big deals et erreurs de prix."""
     user_id = str(update.effective_user.id)
 
     # Obtenir les produits et catégories de l'utilisateur depuis la DB
     user_products = db.get_user_products(user_id)
     user_categories = db.get_user_categories(user_id)
+    
+    # Obtenir les big deals et erreurs de prix
+    big_deals = db.get_big_deals(limit=20)  # Limiter à 20 pour éviter les messages trop longs
+    price_errors = db.get_price_errors(limit=20)
 
-    if not user_products and not user_categories:
+    if not user_products and not user_categories and not big_deals and not price_errors:
         await update.message.reply_text(
             "📭 Vous n'avez aucun produit ou catégorie surveillé.\n"
             "Utilisez /add pour ajouter un produit ou /category pour surveiller une catégorie."
@@ -1222,7 +1226,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     message = ""
     
-    # Afficher les produits
+    # Afficher les produits surveillés
     if user_products:
         message += "📦 **Vos produits surveillés :**\n\n"
         for product in user_products:
@@ -1232,7 +1236,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             message += f"🔗 {product['url']}\n"
             message += f"🆔 ASIN: {product['asin']}\n\n"
     
-    # Afficher les catégories
+    # Afficher les catégories surveillées
     if user_categories:
         if message:
             message += "\n"
@@ -1241,8 +1245,69 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             message += f"📂 **{category['name']}**\n"
             message += f"📊 {category.get('product_count', 0)} produits\n"
             message += f"🎉 {category.get('discounted_count', 0)} en rabais\n\n"
+    
+    # Afficher les big deals
+    if big_deals:
+        if message:
+            message += "\n"
+        message += f"🔥 **Gros rabais détectés ({len(big_deals)} articles) :**\n\n"
+        for i, deal in enumerate(big_deals[:10], 1):  # Limiter à 10 pour le message
+            discount = deal.get('discount_percent', 0)
+            current_price = deal.get('current_price', 0)
+            title = deal.get('title', 'Titre inconnu')
+            message += f"{i}. 🔥 {title[:45]}...\n"
+            message += f"   💰 ${current_price:.2f} CAD (-{discount:.1f}%)\n"
+            message += f"   🔗 {deal.get('url', 'N/A')}\n\n"
+        
+        if len(big_deals) > 10:
+            message += f"📊 ... et {len(big_deals) - 10} autres gros rabais.\n"
+            message += f"💡 Utilisez /bigdeals pour voir tous les articles.\n\n"
+    
+    # Afficher les erreurs de prix
+    if price_errors:
+        if message:
+            message += "\n"
+        message += f"⚠️ **Erreurs de prix détectées ({len(price_errors)} articles) :**\n\n"
+        for i, error in enumerate(price_errors[:10], 1):  # Limiter à 10 pour le message
+            price = error.get('price', 0)
+            title = error.get('title', 'Titre inconnu')
+            error_type = error.get('error_type', 'unknown')
+            message += f"{i}. ⚠️ {title[:45]}...\n"
+            message += f"   💰 ${price:.2f} CAD\n"
+            message += f"   🔗 {error.get('url', 'N/A')}\n\n"
+        
+        if len(price_errors) > 10:
+            message += f"📊 ... et {len(price_errors) - 10} autres erreurs.\n"
+            message += f"💡 Utilisez /priceerrors pour voir tous les articles.\n\n"
 
-    await update.message.reply_text(message, parse_mode="Markdown")
+    # Gérer les messages trop longs (limite Telegram: 4096 caractères)
+    if len(message) > 4000:
+        # Diviser le message en plusieurs parties
+        parts = []
+        current_part = ""
+        
+        sections = message.split("\n\n")
+        for section in sections:
+            if len(current_part) + len(section) + 2 > 4000:
+                if current_part:
+                    parts.append(current_part)
+                current_part = section + "\n\n"
+            else:
+                current_part += section + "\n\n"
+        
+        if current_part:
+            parts.append(current_part)
+        
+        # Envoyer chaque partie
+        for i, part in enumerate(parts):
+            if i == len(parts) - 1:
+                # Dernière partie
+                await update.message.reply_text(part, parse_mode="Markdown")
+            else:
+                # Parties intermédiaires
+                await update.message.reply_text(part + "\n_(suite...)_", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(message, parse_mode="Markdown")
 
 
 async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
