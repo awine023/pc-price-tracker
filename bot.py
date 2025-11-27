@@ -1428,8 +1428,16 @@ class MemoryExpressScraper:
             
             search_url = f"https://www.memoryexpress.com/Search/{search_query.replace(' ', '%20')}"
             
-            await self.page.goto(search_url, wait_until='networkidle', timeout=30000)
-            await asyncio.sleep(random.uniform(3, 5))
+            # Utiliser 'load' au lieu de 'networkidle' pour être plus rapide
+            await self.page.goto(search_url, wait_until='load', timeout=60000)
+            await asyncio.sleep(random.uniform(2, 4))
+            
+            # Attendre que les produits soient chargés
+            try:
+                await self.page.wait_for_selector('.c-product-tile, .product-tile, .product-item, [class*="product"]', timeout=10000)
+            except:
+                # Si les sélecteurs ne sont pas trouvés, continuer quand même
+                logger.debug("Sélecteurs de produits Memory Express non trouvés, continuation...")
             
             # Essayer d'extraire avec JavaScript d'abord (plus fiable)
             try:
@@ -2141,13 +2149,16 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             message += "\n"
         
         # Afficher tous les produits Memory Express
-        if memoryexpress_results:
+        if memoryexpress_results and len(memoryexpress_results) > 0:
             message += f"**🛒 Memory Express** ({len(memoryexpress_results)} produit{'s' if len(memoryexpress_results) > 1 else ''})\n"
             for i, me_product in enumerate(memoryexpress_results, 1):
                 message += f"{i}. 💰 ${me_product['price']:.2f} CAD\n"
                 message += f"   📦 {me_product.get('title', product_name)}\n"
                 message += f"   🔗 {me_product.get('url', '')}\n"
             message += "\n"
+        else:
+            message += f"**🛒 Memory Express**\n"
+            message += f"❌ Aucun produit trouvé ou erreur de connexion\n\n"
         
         message += f"✅ Comparaison sauvegardée. Mise à jour automatique toutes les 60 minutes."
         message += f"Vous recevrez une alerte si un meilleur prix est trouvé."
