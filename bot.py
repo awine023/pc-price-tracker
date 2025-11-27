@@ -1432,12 +1432,14 @@ class MemoryExpressScraper:
             await self.page.goto(search_url, wait_until='load', timeout=60000)
             await asyncio.sleep(random.uniform(2, 4))
             
-            # Attendre que les produits soient chargés
+            # Attendre que les produits soient chargés (plusieurs sélecteurs possibles)
             try:
-                await self.page.wait_for_selector('.c-product-tile, .product-tile, .product-item, [class*="product"]', timeout=10000)
+                await self.page.wait_for_selector('.c-product-tile, .product-tile, .product-item, [class*="product"], .product-card, article', timeout=15000)
             except:
                 # Si les sélecteurs ne sont pas trouvés, continuer quand même
                 logger.debug("Sélecteurs de produits Memory Express non trouvés, continuation...")
+                # Attendre un peu plus pour que le contenu se charge
+                await asyncio.sleep(2)
             
             # Essayer d'extraire avec JavaScript d'abord (plus fiable)
             try:
