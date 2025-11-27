@@ -2214,10 +2214,12 @@ def scan_amazon_globally(app: Application, notify_chat_id: Optional[int] = None)
                     f"Utilisez ces commandes pour voir les détails !"
                 )
                 
-                app.bot.send_message(
-                    chat_id=notify_chat_id,
-                    text=message,
-                    parse_mode="Markdown"
+                loop.run_until_complete(
+                    app.bot.send_message(
+                        chat_id=notify_chat_id,
+                        text=message,
+                        parse_mode="Markdown"
+                    )
                 )
                 logger.info(f"✅ Notification envoyée à {notify_chat_id} après le scan")
             except Exception as e:
@@ -2312,10 +2314,12 @@ def check_prices(app: Application) -> None:
                     for user_id, user_data in data["users"].items():
                         if asin in user_data.get("products", []):
                             try:
-                                app.bot.send_message(
-                                    chat_id=int(user_id),
-                                    text=error_message,
-                                    parse_mode="Markdown",
+                                loop.run_until_complete(
+                                    app.bot.send_message(
+                                        chat_id=int(user_id),
+                                        text=error_message,
+                                        parse_mode="Markdown",
+                                    )
                                 )
                                 logger.info(f"⚠️ Alerte erreur de prix envoyée à {user_id} pour {asin}")
                             except Exception as e:
@@ -2353,10 +2357,12 @@ def check_prices(app: Application) -> None:
                     for user_id, user_data in data["users"].items():
                         if asin in user_data.get("products", []):
                             try:
-                                app.bot.send_message(
-                                    chat_id=int(user_id),
-                                    text=big_deal_message,
-                                    parse_mode="Markdown",
+                                loop.run_until_complete(
+                                    app.bot.send_message(
+                                        chat_id=int(user_id),
+                                        text=big_deal_message,
+                                        parse_mode="Markdown",
+                                    )
                                 )
                                 logger.info(f"🔥 Alerte gros rabais envoyée à {user_id} pour {asin}")
                             except Exception as e:
@@ -2383,10 +2389,12 @@ def check_prices(app: Application) -> None:
                     for user_id, user_data in data["users"].items():
                         if asin in user_data.get("products", []):
                             try:
-                                app.bot.send_message(
-                                    chat_id=int(user_id),
-                                    text=alert_message,
-                                    parse_mode="Markdown",
+                                loop.run_until_complete(
+                                    app.bot.send_message(
+                                        chat_id=int(user_id),
+                                        text=alert_message,
+                                        parse_mode="Markdown",
+                                    )
                                 )
                                 logger.info(f"Alerte envoyée à l'utilisateur {user_id} pour {asin}")
                             except Exception as e:
@@ -2474,10 +2482,12 @@ def check_prices(app: Application) -> None:
                         for user_id, user_data in data["users"].items():
                             if category_id in user_data.get("categories", []):
                                 try:
-                                    app.bot.send_message(
-                                        chat_id=int(user_id),
-                                        text=alert_message,
-                                        parse_mode="Markdown",
+                                    loop.run_until_complete(
+                                        app.bot.send_message(
+                                            chat_id=int(user_id),
+                                            text=alert_message,
+                                            parse_mode="Markdown",
+                                        )
                                     )
                                     logger.info(f"Alerte catégorie envoyée à {user_id} pour {product['asin']}")
                                 except Exception as e:
