@@ -1209,9 +1209,20 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Commande /list - Liste tous les produits, catégories, big deals et erreurs de prix."""
     user_id = str(update.effective_user.id)
 
-    # Obtenir les produits et catégories de l'utilisateur depuis la DB
+    # Obtenir les produits depuis la DB
     user_products = db.get_user_products(user_id)
-    user_categories = db.get_user_categories(user_id)
+    
+    # Obtenir les catégories depuis JSON (pas encore migré vers DB)
+    data = load_data()
+    categories = data.get("categories", {})
+    user_categories = []
+    for category_id, category_data in categories.items():
+        if category_data.get("added_by") == user_id:
+            user_categories.append({
+                "name": category_data.get("name", category_id),
+                "product_count": category_data.get("product_count", 0),
+                "discounted_count": category_data.get("discounted_count", 0),
+            })
     
     # Obtenir les big deals et erreurs de prix
     big_deals = db.get_big_deals(limit=20)  # Limiter à 20 pour éviter les messages trop longs
