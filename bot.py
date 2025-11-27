@@ -1082,6 +1082,209 @@ class AmazonScraper:
             return []
 
 
+class CanadaComputersScraper:
+    """Scraper pour Canada Computers."""
+    
+    def __init__(self):
+        self.playwright: Optional[Playwright] = None
+        self.browser: Optional[Browser] = None
+        self.page: Optional[Page] = None
+    
+    async def init_browser(self):
+        """Initialise le navigateur Playwright."""
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-blink-features=AutomationControlled']
+            )
+            context = await self.browser.new_context(
+                user_agent=random.choice(USER_AGENTS),
+                viewport={'width': 1920, 'height': 1080},
+                locale='en-CA',
+            )
+            self.page = await context.new_page()
+        except Exception as e:
+            logger.error(f"Erreur lors de l'initialisation du navigateur Canada Computers: {e}")
+    
+    async def close_browser(self):
+        """Ferme le navigateur."""
+        try:
+            if self.page:
+                await self.page.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+        except:
+            pass
+        self.page = None
+        self.browser = None
+        self.playwright = None
+    
+    async def search_product(self, search_query: str) -> Optional[Dict]:
+        """Recherche un produit sur Canada Computers."""
+        try:
+            if not self.page or not self.browser:
+                await self.init_browser()
+            
+            search_url = f"https://www.canadacomputers.com/search/results_details.php?language=en&keywords={search_query.replace(' ', '+')}"
+            
+            await self.page.goto(search_url, wait_until='domcontentloaded', timeout=30000)
+            await asyncio.sleep(random.uniform(2, 4))
+            
+            html = await self.page.content()
+            soup = BeautifulSoup(html, 'lxml')
+            
+            # Chercher le premier produit
+            product_elem = soup.find('div', {'class': 'productTemplate'}) or soup.find('div', {'class': 'product-list-item'})
+            if not product_elem:
+                product_elem = soup.find('a', {'class': re.compile(r'product', re.I)})
+            
+            if not product_elem:
+                return None
+            
+            # Extraire le titre
+            title_elem = product_elem.find('a', {'class': re.compile(r'title|name', re.I)}) or product_elem.find('h3') or product_elem.find('h2')
+            title = title_elem.get_text(strip=True) if title_elem else "Produit Canada Computers"
+            
+            # Extraire le prix
+            price_elem = product_elem.find('span', {'class': re.compile(r'price|cost', re.I)}) or product_elem.find('strong', {'class': re.compile(r'price', re.I)})
+            if not price_elem:
+                price_elem = product_elem.find(string=re.compile(r'\$\d+'))
+            
+            price = None
+            if price_elem:
+                price_text = price_elem.get_text(strip=True) if hasattr(price_elem, 'get_text') else str(price_elem)
+                price_match = re.search(r'[\d,]+\.?\d*', price_text.replace(',', ''))
+                if price_match:
+                    try:
+                        price = float(price_match.group())
+                    except ValueError:
+                        pass
+            
+            # Extraire l'URL
+            url_elem = product_elem.find('a', href=True)
+            url = url_elem['href'] if url_elem else None
+            if url and not url.startswith('http'):
+                url = f"https://www.canadacomputers.com{url}"
+            
+            if not price:
+                return None
+            
+            return {
+                "title": title,
+                "price": price,
+                "url": url or search_url
+            }
+        except Exception as e:
+            logger.error(f"Erreur lors de la recherche Canada Computers: {e}")
+            return None
+
+
+class NeweggScraper:
+    """Scraper pour Newegg Canada."""
+    
+    def __init__(self):
+        self.playwright: Optional[Playwright] = None
+        self.browser: Optional[Browser] = None
+        self.page: Optional[Page] = None
+    
+    async def init_browser(self):
+        """Initialise le navigateur Playwright."""
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-blink-features=AutomationControlled']
+            )
+            context = await self.browser.new_context(
+                user_agent=random.choice(USER_AGENTS),
+                viewport={'width': 1920, 'height': 1080},
+                locale='en-CA',
+            )
+            self.page = await context.new_page()
+        except Exception as e:
+            logger.error(f"Erreur lors de l'initialisation du navigateur Newegg: {e}")
+    
+    async def close_browser(self):
+        """Ferme le navigateur."""
+        try:
+            if self.page:
+                await self.page.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+        except:
+            pass
+        self.page = None
+        self.browser = None
+        self.playwright = None
+    
+    async def search_product(self, search_query: str) -> Optional[Dict]:
+        """Recherche un produit sur Newegg Canada."""
+        try:
+            if not self.page or not self.browser:
+                await self.init_browser()
+            
+            search_url = f"https://www.newegg.ca/p/pl?d={search_query.replace(' ', '+')}"
+            
+            await self.page.goto(search_url, wait_until='domcontentloaded', timeout=30000)
+            await asyncio.sleep(random.uniform(2, 4))
+            
+            html = await self.page.content()
+            soup = BeautifulSoup(html, 'lxml')
+            
+            # Chercher le premier produit
+            product_elem = soup.find('div', {'class': 'item-cell'}) or soup.find('div', {'class': 'item-container'})
+            if not product_elem:
+                product_elem = soup.find('a', {'class': re.compile(r'item', re.I)})
+            
+            if not product_elem:
+                return None
+            
+            # Extraire le titre
+            title_elem = product_elem.find('a', {'class': re.compile(r'title|item-title', re.I)}) or product_elem.find('img', alt=True)
+            if title_elem:
+                title = title_elem.get('alt') or title_elem.get_text(strip=True) if hasattr(title_elem, 'get_text') else str(title_elem)
+            else:
+                title = "Produit Newegg"
+            
+            # Extraire le prix
+            price_elem = product_elem.find('li', {'class': re.compile(r'price', re.I)}) or product_elem.find('span', {'class': re.compile(r'price', re.I)})
+            if not price_elem:
+                price_elem = product_elem.find(string=re.compile(r'\$\d+'))
+            
+            price = None
+            if price_elem:
+                price_text = price_elem.get_text(strip=True) if hasattr(price_elem, 'get_text') else str(price_elem)
+                price_match = re.search(r'[\d,]+\.?\d*', price_text.replace(',', ''))
+                if price_match:
+                    try:
+                        price = float(price_match.group())
+                    except ValueError:
+                        pass
+            
+            # Extraire l'URL
+            url_elem = product_elem.find('a', href=True)
+            url = url_elem['href'] if url_elem else None
+            if url and not url.startswith('http'):
+                url = f"https://www.newegg.ca{url}"
+            
+            if not price:
+                return None
+            
+            return {
+                "title": title,
+                "price": price,
+                "url": url or search_url
+            }
+        except Exception as e:
+            logger.error(f"Erreur lors de la recherche Newegg: {e}")
+            return None
+
+
 # Marques connues pour les composants PC (filtre qualité)
 KNOWN_BRANDS = {
     # Cartes graphiques
@@ -1104,8 +1307,10 @@ KNOWN_BRANDS = {
     'logitech', 'razer', 'steelseries', 'hyperx', 'benq', 'asus', 'acer', 'dell', 'hp', 'lenovo',
 }
 
-# Instance globale du scraper
+# Instances globales des scrapers
 amazon_scraper = AmazonScraper()
+canadacomputers_scraper = CanadaComputersScraper()
+newegg_scraper = NeweggScraper()
 
 # Instance globale de l'analyseur de prix
 price_analyzer = PriceAnalyzer(
@@ -1385,6 +1590,131 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
     else:
         await update.message.reply_text("❌ Erreur lors de la suppression.")
+
+
+async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Commande /compare - Compare les prix d'un produit sur Amazon, Canada Computers et Newegg."""
+    user_id = str(update.effective_user.id)
+    username = update.effective_user.username or "Inconnu"
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Veuillez fournir le nom d'un produit à comparer.\n\n"
+            "**Exemple :**\n"
+            "/compare RTX 4070\n"
+            "/compare Ryzen 7 7800X3D\n"
+            "/compare Samsung 980 Pro 1TB\n\n"
+            "Le bot comparera automatiquement les prix toutes les 60 minutes sur :\n"
+            "🛒 Amazon.ca\n"
+            "🛒 Canada Computers\n"
+            "🛒 Newegg.ca"
+        )
+        return
+    
+    product_name = " ".join(context.args)
+    search_query = product_name
+    
+    await update.message.reply_text(
+        f"⏳ Recherche de '{product_name}' sur les 3 sites...\n"
+        "Cela peut prendre quelques instants."
+    )
+    
+    # Créer une boucle d'événements pour les appels async
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        # Rechercher sur les 3 sites en parallèle
+        amazon_result = None
+        cc_result = None
+        newegg_result = None
+        
+        # Amazon - utiliser la recherche de catégorie pour trouver le produit
+        try:
+            products = await amazon_scraper.get_category_products(search_query, max_products=1)
+            if products:
+                amazon_result = {
+                    "title": products[0].get("title", product_name),
+                    "price": products[0].get("current_price"),
+                    "url": products[0].get("url")
+                }
+        except Exception as e:
+            logger.error(f"Erreur recherche Amazon: {e}")
+        
+        # Canada Computers
+        try:
+            cc_result = await canadacomputers_scraper.search_product(search_query)
+        except Exception as e:
+            logger.error(f"Erreur recherche Canada Computers: {e}")
+        
+        # Newegg
+        try:
+            newegg_result = await newegg_scraper.search_product(search_query)
+        except Exception as e:
+            logger.error(f"Erreur recherche Newegg: {e}")
+        
+        # Déterminer le meilleur prix
+        prices = []
+        if amazon_result and amazon_result.get("price"):
+            prices.append(("Amazon.ca", amazon_result["price"], amazon_result.get("url", "")))
+        if cc_result and cc_result.get("price"):
+            prices.append(("Canada Computers", cc_result["price"], cc_result.get("url", "")))
+        if newegg_result and newegg_result.get("price"):
+            prices.append(("Newegg.ca", newegg_result["price"], newegg_result.get("url", "")))
+        
+        if not prices:
+            await update.message.reply_text(
+                f"❌ Aucun produit trouvé pour '{product_name}' sur les 3 sites.\n\n"
+                "**Suggestions :**\n"
+                "• Vérifiez l'orthographe\n"
+                "• Essayez un terme plus spécifique\n"
+                "• Exemple: /compare RTX 4070 au lieu de /compare carte graphique"
+            )
+            return
+        
+        # Trier par prix
+        prices.sort(key=lambda x: x[1])
+        best_site, best_price, best_url = prices[0]
+        
+        # Sauvegarder dans la base de données
+        db.add_user(user_id, username)
+        comparison_id = db.add_price_comparison(user_id, product_name, search_query)
+        db.update_price_comparison(
+            comparison_id,
+            amazon_price=amazon_result.get("price") if amazon_result else None,
+            amazon_url=amazon_result.get("url") if amazon_result else None,
+            canadacomputers_price=cc_result.get("price") if cc_result else None,
+            canadacomputers_url=cc_result.get("url") if cc_result else None,
+            newegg_price=newegg_result.get("price") if newegg_result else None,
+            newegg_url=newegg_result.get("url") if newegg_result else None
+        )
+        
+        # Construire le message de comparaison
+        message = f"📊 **Comparaison de prix pour : {product_name}**\n\n"
+        
+        for site_name, price, url in prices:
+            if site_name == best_site:
+                message += f"🏆 **{site_name}: ${price:.2f} CAD** (MEILLEUR PRIX)\n"
+            else:
+                diff = price - best_price
+                message += f"💰 {site_name}: ${price:.2f} CAD (+${diff:.2f})\n"
+            if url:
+                message += f"   🔗 {url}\n"
+            message += "\n"
+        
+        message += f"✅ **Produit ajouté à la surveillance !**\n"
+        message += f"Le bot comparera automatiquement les prix toutes les 60 minutes.\n"
+        message += f"Vous recevrez une alerte si un meilleur prix est trouvé."
+        
+        await update.message.reply_text(message, parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Erreur lors de la comparaison: {e}")
+        await update.message.reply_text(
+            f"❌ Erreur lors de la comparaison: {str(e)}"
+        )
+    finally:
+        loop.close()
 
 
 async def category_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2568,6 +2898,127 @@ def check_prices(app: Application) -> None:
         loop.close()
 
 
+def check_price_comparisons(app: Application) -> None:
+    """Vérifie les prix des produits à comparer sur les 3 sites toutes les 60 minutes."""
+    comparisons = db.get_all_comparisons()
+    
+    if not comparisons:
+        return
+    
+    logger.info(f"🔍 Vérification de {len(comparisons)} comparaisons de prix...")
+    
+    # Créer une nouvelle boucle d'événements
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        for comparison in comparisons:
+            try:
+                search_query = comparison['search_query']
+                comparison_id = comparison['id']
+                user_id = comparison['user_id']
+                product_name = comparison['product_name']
+                previous_best_price = comparison.get('best_price')
+                previous_best_site = comparison.get('best_site')
+                
+                logger.info(f"Comparaison de '{product_name}' (ID: {comparison_id})")
+                
+                # Rechercher sur les 3 sites
+                amazon_result = None
+                cc_result = None
+                newegg_result = None
+                
+                # Amazon
+                try:
+                    products = loop.run_until_complete(
+                        amazon_scraper.get_category_products(search_query, max_products=1)
+                    )
+                    if products:
+                        amazon_result = {
+                            "title": products[0].get("title", product_name),
+                            "price": products[0].get("current_price"),
+                            "url": products[0].get("url")
+                        }
+                except Exception as e:
+                    logger.error(f"Erreur recherche Amazon pour '{product_name}': {e}")
+                
+                # Canada Computers
+                try:
+                    cc_result = loop.run_until_complete(
+                        canadacomputers_scraper.search_product(search_query)
+                    )
+                except Exception as e:
+                    logger.error(f"Erreur recherche Canada Computers pour '{product_name}': {e}")
+                
+                # Newegg
+                try:
+                    newegg_result = loop.run_until_complete(
+                        newegg_scraper.search_product(search_query)
+                    )
+                except Exception as e:
+                    logger.error(f"Erreur recherche Newegg pour '{product_name}': {e}")
+                
+                # Mettre à jour la base de données
+                db.update_price_comparison(
+                    comparison_id,
+                    amazon_price=amazon_result.get("price") if amazon_result else None,
+                    amazon_url=amazon_result.get("url") if amazon_result else None,
+                    canadacomputers_price=cc_result.get("price") if cc_result else None,
+                    canadacomputers_url=cc_result.get("url") if cc_result else None,
+                    newegg_price=newegg_result.get("price") if newegg_result else None,
+                    newegg_url=newegg_result.get("url") if newegg_result else None
+                )
+                
+                # Récupérer les prix mis à jour
+                current_comparison = db.get_comparison_by_id(comparison_id)
+                
+                if not current_comparison:
+                    continue
+                
+                current_best_price = current_comparison.get('best_price')
+                current_best_site = current_comparison.get('best_site')
+                
+                # Vérifier si le meilleur prix a changé
+                if current_best_price and previous_best_price:
+                    if current_best_price < previous_best_price:
+                        # Nouveau meilleur prix trouvé !
+                        savings = previous_best_price - current_best_price
+                        message = (
+                            f"🎉 **NOUVEAU MEILLEUR PRIX TROUVÉ !**\n\n"
+                            f"📦 {product_name}\n\n"
+                            f"💰 **Ancien meilleur prix:** ${previous_best_price:.2f} CAD ({previous_best_site})\n"
+                            f"🏆 **Nouveau meilleur prix:** ${current_best_price:.2f} CAD ({current_best_site})\n"
+                            f"💵 **Économie:** ${savings:.2f} CAD\n\n"
+                        )
+                        
+                        # Ajouter les prix de tous les sites
+                        if current_comparison.get('amazon_price'):
+                            message += f"🛒 Amazon.ca: ${current_comparison['amazon_price']:.2f} CAD\n"
+                            if current_comparison.get('amazon_url'):
+                                message += f"   🔗 {current_comparison['amazon_url']}\n"
+                        if current_comparison.get('canadacomputers_price'):
+                            message += f"🛒 Canada Computers: ${current_comparison['canadacomputers_price']:.2f} CAD\n"
+                            if current_comparison.get('canadacomputers_url'):
+                                message += f"   🔗 {current_comparison['canadacomputers_url']}\n"
+                        if current_comparison.get('newegg_price'):
+                            message += f"🛒 Newegg.ca: ${current_comparison['newegg_price']:.2f} CAD\n"
+                            if current_comparison.get('newegg_url'):
+                                message += f"   🔗 {current_comparison['newegg_url']}\n"
+                        
+                        send_message_sync(app, int(user_id), message, loop)
+                        logger.info(f"✅ Alerte meilleur prix envoyée à {user_id} pour '{product_name}'")
+                
+                # Pause entre les comparaisons
+                time.sleep(5)
+                
+            except Exception as e:
+                logger.error(f"Erreur lors de la vérification de la comparaison {comparison.get('id')}: {e}")
+                continue
+    
+    finally:
+        loop.close()
+
+
 def main() -> None:
     """Fonction principale du bot."""
     global global_application
@@ -2587,6 +3038,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("add", add_command))
     application.add_handler(CommandHandler("category", category_command))
+    application.add_handler(CommandHandler("compare", compare_command))
     application.add_handler(CommandHandler("list", list_command))
     application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CommandHandler("history", history_command))
@@ -2621,6 +3073,17 @@ def main() -> None:
         replace_existing=True,
     )
     logger.info(f"🌍 Scan global d'Amazon.ca programmé toutes les {GLOBAL_SCAN_INTERVAL_MINUTES} minutes")
+    
+    # Job 3: Comparer les prix sur les 3 sites (Amazon, Canada Computers, Newegg)
+    scheduler.add_job(
+        check_price_comparisons,
+        "interval",
+        minutes=60,  # Toutes les 60 minutes
+        args=[application],
+        id="check_price_comparisons",
+        replace_existing=True,
+    )
+    logger.info(f"🛒 Comparaison de prix multi-sites programmée toutes les 60 minutes")
     
     scheduler.start()
 

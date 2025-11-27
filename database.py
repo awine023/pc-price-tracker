@@ -141,11 +141,33 @@ class Database:
             )
         """)
         
+        # Table des comparaisons de prix multi-sites
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS price_comparisons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                search_query TEXT NOT NULL,
+                amazon_price REAL,
+                amazon_url TEXT,
+                canadacomputers_price REAL,
+                canadacomputers_url TEXT,
+                newegg_price REAL,
+                newegg_url TEXT,
+                best_price REAL,
+                best_site TEXT,
+                last_check TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        
         # Index pour améliorer les performances
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_asin ON price_history(asin)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_date ON price_history(recorded_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_added_by ON products(added_by)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_category_products_category ON category_products(category_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_comparisons_user ON price_comparisons(user_id)")
         
         conn.commit()
         conn.close()
@@ -512,6 +534,111 @@ class Database:
         
         conn.close()
         return stats
+    
+    # ========================================================================
+    # MÉTHODES POUR LES COMPARAISONS DE PRIX MULTI-SITES
+    # ========================================================================
+    
+    def add_price_comparison(self, user_id: str, product_name: str, search_query: str) -> int:
+        """Ajoute un produit à comparer sur plusieurs sites."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO price_comparisons (user_id, product_name, search_query)
+            VALUES (?, ?, ?)
+        """, (user_id, product_name, search_query))
+        comparison_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return comparison_id
+    
+    def get_user_comparisons(self, user_id: str) -> List[Dict]:
+        """Récupère toutes les comparaisons d'un utilisateur."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM price_comparisons 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+        """, (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    
+    def get_all_comparisons(self) -> List[Dict]:
+        """Récupère toutes les comparaisons actives."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM price_comparisons 
+            ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    
+    def get_comparison_by_id(self, comparison_id: int) -> Optional[Dict]:
+        """Récupère une comparaison par son ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM price_comparisons 
+            WHERE id = ?
+        """, (comparison_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+    
+    def update_price_comparison(self, comparison_id: int, amazon_price: float = None, amazon_url: str = None,
+                                canadacomputers_price: float = None, canadacomputers_url: str = None,
+                                newegg_price: float = None, newegg_url: str = None):
+        """Met à jour les prix d'une comparaison."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Déterminer le meilleur prix
+        prices = []
+        if amazon_price:
+            prices.append(('amazon', amazon_price))
+        if canadacomputers_price:
+            prices.append(('canadacomputers', canadacomputers_price))
+        if newegg_price:
+            prices.append(('newegg', newegg_price))
+        
+        best_price = None
+        best_site = None
+        if prices:
+            best_site, best_price = min(prices, key=lambda x: x[1])
+        
+        cursor.execute("""
+            UPDATE price_comparisons 
+            SET amazon_price = COALESCE(?, amazon_price),
+                amazon_url = COALESCE(?, amazon_url),
+                canadacomputers_price = COALESCE(?, canadacomputers_price),
+                canadacomputers_url = COALESCE(?, canadacomputers_url),
+                newegg_price = COALESCE(?, newegg_price),
+                newegg_url = COALESCE(?, newegg_url),
+                best_price = ?,
+                best_site = ?,
+                last_check = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (amazon_price, amazon_url, canadacomputers_price, canadacomputers_url,
+              newegg_price, newegg_url, best_price, best_site, comparison_id))
+        conn.commit()
+        conn.close()
+    
+    def delete_price_comparison(self, comparison_id: int, user_id: str) -> bool:
+        """Supprime une comparaison."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM price_comparisons 
+            WHERE id = ? AND user_id = ?
+        """, (comparison_id, user_id))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
 
 
 # Instance globale de la base de données
