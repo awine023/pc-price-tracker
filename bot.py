@@ -1141,14 +1141,17 @@ class CanadaComputersScraper:
                         const results = [];
                         
                         // Chercher tous les produits dans les résultats de recherche
-                        const products = document.querySelectorAll('.productTemplate, .product-list-item, .product-item, [data-product-id], article.product, div[class*="product"]');
+                        // Canada Computers utilise souvent des divs avec des classes spécifiques
+                        let products = document.querySelectorAll('.productTemplate, .product-list-item, .product-item, [data-product-id], article.product, div[class*="product"], .product-list, .product-grid-item, div.product-item-wrapper');
                         
                         if (products.length === 0) {{
-                            // Essayer d'autres sélecteurs
-                            const altProducts = document.querySelectorAll('[class*="product"], [class*="item"]');
-                            if (altProducts.length > 0) {{
-                                products = altProducts;
-                            }}
+                            // Essayer d'autres sélecteurs plus génériques
+                            products = document.querySelectorAll('[class*="product"], [class*="item"], .item-box, .product-box');
+                        }}
+                        
+                        // Si toujours rien, chercher dans les tableaux de résultats
+                        if (products.length === 0) {{
+                            products = document.querySelectorAll('tr[class*="product"], td[class*="product"], li[class*="product"]');
                         }}
                         
                         for (let i = 0; i < Math.min(products.length, maxResults); i++) {{
@@ -1168,29 +1171,32 @@ class CanadaComputersScraper:
                                 }}
                             }}
                             
-                            // Extraire le prix
+                            // Extraire le prix - Canada Computers peut avoir plusieurs formats
                             let price = null;
                             
-                            // Chercher "Member Price:" d'abord
+                            // Méthode 1: Chercher "Member Price:" d'abord (prix membre, souvent le meilleur)
                             const memberPriceText = product.textContent || '';
                             const memberPriceMatch = memberPriceText.match(/Member Price:\\s*\\$?([\\d,]+\\\\.?\\d*)/i);
                             if (memberPriceMatch) {{
                                 price = parseFloat(memberPriceMatch[1].replace(/,/g, ''));
                             }}
                             
-                            // Si pas de prix membre, chercher le prix régulier
+                            // Méthode 2: Chercher dans les éléments de prix spécifiques
                             if (!price || price <= 0) {{
                                 const priceSelectors = [
                                     '.price', '.product-price', '.price-current', 
-                                    '.price-regular', '[class*="price"]', 
-                                    'strong.price', 'span.price', '.d-block.price'
+                                    '.price-regular', '.price-member', '.price-box',
+                                    '[class*="price"]', 'strong.price', 'span.price', 
+                                    '.d-block.price', '.price-tag', '.product-price-box',
+                                    'div.price', 'span[class*="price"]', 'strong[class*="price"]'
                                 ];
                                 
                                 for (const selector of priceSelectors) {{
-                                    const priceElem = product.querySelector(selector);
-                                    if (priceElem) {{
-                                        const priceText = priceElem.textContent || priceElem.innerText || '';
-                                        const match = priceText.match(/\\$?\\s*([\\d,]+\\\\.?\\d*)/);
+                                    const priceElems = product.querySelectorAll(selector);
+                                    for (const priceElem of priceElems) {{
+                                        const priceText = (priceElem.textContent || priceElem.innerText || '').trim();
+                                        // Chercher plusieurs formats: $XX.XX, XX.XX, CAD $XX.XX
+                                        const match = priceText.match(/\\$?\\s*(?:CAD\\s*)?([\\d,]+\\\\.?\\d*)/i);
                                         if (match) {{
                                             const testPrice = parseFloat(match[1].replace(/,/g, ''));
                                             if (testPrice > 0 && testPrice < 100000) {{
@@ -1199,13 +1205,15 @@ class CanadaComputersScraper:
                                             }}
                                         }}
                                     }}
+                                    if (price) break;
                                 }}
                             }}
                             
-                            // Si toujours pas trouvé, chercher dans tout le texte
+                            // Méthode 3: Chercher dans tout le texte du produit (dernier recours)
                             if (!price || price <= 0) {{
                                 const allText = product.textContent || '';
-                                const priceMatches = allText.matchAll(/\\$?\\s*([\\d,]+\\\\.?\\d*)/g);
+                                // Chercher tous les prix et prendre le premier valide
+                                const priceMatches = allText.matchAll(/\\$?\\s*(?:CAD\\s*)?([\\d,]+\\\\.?\\d*)/gi);
                                 for (const match of priceMatches) {{
                                     const testPrice = parseFloat(match[1].replace(/,/g, ''));
                                     if (testPrice > 1 && testPrice < 100000) {{
@@ -1217,19 +1225,48 @@ class CanadaComputersScraper:
                             
                             // Extraire l'URL - IMPORTANT: chercher un lien direct vers le produit
                             let url = '';
+                            // Canada Computers utilise souvent /product_info/item_id_xxx.html ou /product/item_id_xxx
                             const linkSelectors = [
+                                'a[href*="/product_info/item_id"]', 
                                 'a[href*="/product_info"]', 
-                                'a[href*="/product"]', 
-                                'a[href*="/item"]',
+                                'a[href*="/product/item_id"]',
+                                'a[href*="/product/"]',
+                                'a[href*="/item_id"]',
+                                'a[href*="/item/"]',
+                                'a.product-link',
                                 'a[title]',
+                                'h2 a', 'h3 a',
                                 'a[href]'
                             ];
+                            
                             for (const selector of linkSelectors) {{
-                                const linkElem = product.querySelector(selector);
-                                if (linkElem) {{
-                                    url = linkElem.getAttribute('href') || '';
-                                    // S'assurer que c'est un lien direct, pas une page de recherche
-                                    if (url && !url.includes('search') && !url.includes('results_details')) {{
+                                const linkElems = product.querySelectorAll(selector);
+                                for (const linkElem of linkElems) {{
+                                    const href = linkElem.getAttribute('href') || '';
+                                    // S'assurer que c'est un lien direct vers un produit
+                                    if (href && 
+                                        !href.includes('search') && 
+                                        !href.includes('results_details') &&
+                                        !href.includes('javascript:') &&
+                                        (href.includes('product_info') || href.includes('product/') || href.includes('item_id'))) {{
+                                        url = href;
+                                        break;
+                                    }}
+                                }}
+                                if (url) break;
+                            }}
+                            
+                            // Si pas trouvé, chercher n'importe quel lien qui ne soit pas une page de recherche
+                            if (!url) {{
+                                const allLinks = product.querySelectorAll('a[href]');
+                                for (const link of allLinks) {{
+                                    const href = link.getAttribute('href') || '';
+                                    if (href && 
+                                        !href.includes('search') && 
+                                        !href.includes('results_details') &&
+                                        !href.includes('javascript:') &&
+                                        href.startsWith('/') || href.startsWith('http')) {{
+                                        url = href;
                                         break;
                                     }}
                                 }}
@@ -1278,14 +1315,22 @@ class CanadaComputersScraper:
             selectors = [
                 'div.productTemplate',
                 'div.product-list-item',
+                'div.product-item',
                 'div[class*="product"]',
                 'article.product',
-                'div.item'
+                'div.item',
+                '.product-list .product-item',
+                '.product-grid-item',
+                'div.product-item-wrapper',
+                'tr[class*="product"]',
+                'td[class*="product"]',
+                'li[class*="product"]'
             ]
             
             for selector in selectors:
                 product_elems = soup.select(selector)
                 if product_elems:
+                    logger.debug(f"Trouvé {len(product_elems)} produits avec le sélecteur: {selector}")
                     break
             
             if not product_elems:
@@ -1358,25 +1403,49 @@ class CanadaComputersScraper:
                 if not price or price <= 0:
                     continue
                 
-                # Extraire l'URL
-                url_elem = product_elem.select_one('a[href]')
-                url = url_elem.get('href') if url_elem else None
-                if url and not url.startswith('http'):
-                    url = f"https://www.canadacomputers.com{url}"
+                # Extraire l'URL - chercher plusieurs types de liens
+                url = None
+                url_selectors = [
+                    'a[href*="/product_info/item_id"]',
+                    'a[href*="/product_info"]',
+                    'a[href*="/product/item_id"]',
+                    'a[href*="/product/"]',
+                    'a[href*="/item_id"]',
+                    'a.product-link',
+                    'h2 a', 'h3 a',
+                    'a[title]',
+                    'a[href]'
+                ]
                 
-                # S'assurer que l'URL est un lien direct, pas une page de recherche
-                if url and ('search' in url or 'results_details' in url):
-                    # Essayer de trouver un meilleur lien
-                    better_link = product_elem.select_one('a[href*="/product_info"], a[href*="/product"]')
-                    if better_link and better_link.get('href'):
-                        better_url = better_link.get('href')
-                        if not better_url.startswith('http'):
-                            better_url = f"https://www.canadacomputers.com{better_url}"
-                        if 'search' not in better_url and 'results_details' not in better_url:
-                            url = better_url
+                for selector in url_selectors:
+                    url_elems = product_elem.select(selector)
+                    for url_elem in url_elems:
+                        href = url_elem.get('href')
+                        if href and not href.startswith('javascript:'):
+                            # Vérifier que c'est un lien direct vers un produit
+                            if ('product_info' in href or 'product/' in href or 'item_id' in href) and \
+                               'search' not in href and 'results_details' not in href:
+                                url = href
+                                break
+                    if url:
+                        break
                 
-                if not url or 'search' in url or 'results_details' in url:
-                    url = search_url  # Fallback
+                # Si pas trouvé, chercher n'importe quel lien valide
+                if not url:
+                    all_links = product_elem.select('a[href]')
+                    for link in all_links:
+                        href = link.get('href')
+                        if href and not href.startswith('javascript:') and \
+                           'search' not in href and 'results_details' not in href:
+                            url = href
+                            break
+                
+                # Compléter l'URL si nécessaire
+                if url:
+                    if not url.startswith('http'):
+                        url = f"https://www.canadacomputers.com{url}"
+                else:
+                    url = search_url  # Fallback si pas de lien direct trouvé
                 
                 products_list.append({
                     "title": title,
