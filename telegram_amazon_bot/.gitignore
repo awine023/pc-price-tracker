@@ -1,0 +1,26 @@
+# Configuration et données sensibles
+config.py
+data.json
+.env
+bot_database.db
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
