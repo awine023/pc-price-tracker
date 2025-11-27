@@ -1545,31 +1545,37 @@ class NeweggScraper:
             # Extraire le prix avec plusieurs méthodes
             price = None
             price_selectors = [
-                '.price-current',
                 'li.price-current',
+                '.price-current',
+                'ul.price li',
                 '.price',
                 '[class*="price-current"]',
-                'strong.price-current'
+                'strong.price-current',
+                '.price-box'
             ]
             
             for selector in price_selectors:
                 price_elem = product_elem.select_one(selector)
                 if price_elem:
                     price_text = price_elem.get_text(strip=True)
-                    # Newegg peut avoir "CAD $XXX.XX" ou "$XXX.XX"
-                    price_match = re.search(r'[\d,]+\.?\d*', price_text.replace(',', ''))
-                    if price_match:
+                    # Newegg peut avoir "CAD $XXX.XX" ou "$XXX.XX" ou "XXX.XX"
+                    # Chercher tous les nombres et prendre le premier valide
+                    price_matches = re.findall(r'[\d,]+\.?\d*', price_text.replace(',', ''))
+                    for match in price_matches:
                         try:
-                            test_price = float(price_match.group())
+                            test_price = float(match)
                             if 1 < test_price < 100000:
                                 price = test_price
                                 break
                         except ValueError:
                             continue
+                    if price:
+                        break
             
             # Si pas trouvé, chercher dans tout le texte
             if not price:
                 all_text = product_elem.get_text()
+                # Chercher tous les prix et prendre le premier valide
                 price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
                 for match in price_matches:
                     try:
