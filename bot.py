@@ -1426,21 +1426,30 @@ class MemoryExpressScraper:
             if not self.page or not self.browser:
                 await self.init_browser()
             
+            # Memory Express utilise une URL de recherche différente
             search_url = f"https://www.memoryexpress.com/Search/{search_query.replace(' ', '%20')}"
             logger.info(f"🔍 Recherche Memory Express: {search_query}")
+            logger.info(f"🔗 URL: {search_url}")
             
             # Utiliser 'domcontentloaded' pour être plus rapide
             try:
                 await self.page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
+                logger.debug("Page Memory Express chargée avec domcontentloaded")
             except Exception as e:
-                logger.warning(f"Timeout lors du chargement de Memory Express, tentative avec 'load': {e}")
+                logger.warning(f"Timeout domcontentloaded, tentative avec 'load': {e}")
                 try:
                     await self.page.goto(search_url, wait_until='load', timeout=30000)
-                except:
-                    logger.error(f"Impossible de charger Memory Express: {e}")
+                    logger.debug("Page Memory Express chargée avec load")
+                except Exception as e2:
+                    logger.error(f"Impossible de charger Memory Express: {e2}")
                     return []
             
-            await asyncio.sleep(random.uniform(3, 5))
+            # Attendre que le JavaScript charge les produits
+            await asyncio.sleep(random.uniform(4, 6))
+            
+            # Scroller pour déclencher le chargement lazy
+            await self.page.evaluate("window.scrollTo(0, 500)")
+            await asyncio.sleep(2)
             
             # Attendre que les produits soient chargés (plusieurs sélecteurs possibles)
             try:
@@ -1451,20 +1460,67 @@ class MemoryExpressScraper:
             
             # Vérifier si la page a chargé correctement
             page_title = await self.page.title()
-            logger.debug(f"Titre de la page Memory Express: {page_title}")
+            page_url = self.page.url
+            logger.info(f"📄 Titre de la page Memory Express: {page_title}")
+            logger.info(f"🔗 URL actuelle: {page_url}")
             
-            # Vérifier s'il y a des résultats
-            has_results = await self.page.evaluate("""
+            # Vérifier le contenu de la page
+            page_content = await self.page.content()
+            logger.debug(f"📊 Taille du HTML: {len(page_content)} caractères")
+            
+            # Vérifier s'il y a Cloudflare
+            is_cloudflare = False
+            if 'Just a moment' in page_title or 'just a moment' in page_title.lower():
+                is_cloudflare = True
+                logger.warning("⚠️ Memory Express est protégé par Cloudflare - attente de la vérification...")
+            
+            # Vérifier s'il y a des résultats avec plusieurs méthodes
+            page_info = await self.page.evaluate("""
                 () => {
-                    const products = document.querySelectorAll('.c-product-tile, .product-tile, .product-item, [class*="product"], .product-card, article, [data-product]');
-                    return products.length > 0;
+                    const bodyText = document.body ? document.body.innerText.substring(0, 300) : 'No body';
+                    const info = {
+                        bodyText: bodyText,
+                        productCount1: document.querySelectorAll('.c-product-tile, .product-tile, .product-item').length,
+                        productCount2: document.querySelectorAll('[class*="product"]').length,
+                        productCount3: document.querySelectorAll('[class*="Product"]').length,
+                        productCount4: document.querySelectorAll('article, [data-product], .product-card').length,
+                        hasNoResults: bodyText.includes('No results') || bodyText.includes('no results'),
+                        hasError: bodyText.includes('error') || bodyText.includes('Error'),
+                        isCloudflare: bodyText.includes('Verifying you are human') || bodyText.includes('Checking your browser') || bodyText.includes('Just a moment')
+                    };
+                    return info;
                 }
             """)
             
-            if not has_results:
+            logger.info(f"📊 Info page Memory Express: {page_info}")
+            
+            # Si Cloudflare est détecté, attendre plus longtemps
+            if page_info.get('isCloudflare') or is_cloudflare:
+                logger.warning("🛡️ Cloudflare détecté - attente de 10-15 secondes...")
+                await asyncio.sleep(10)
+                # Recharger la page
+                try:
+                    await self.page.reload(wait_until='domcontentloaded', timeout=30000)
+                    await asyncio.sleep(5)
+                    page_title = await self.page.title()
+                    if 'Just a moment' in page_title:
+                        logger.error("❌ Cloudflare bloque toujours - impossible de scraper Memory Express")
+                        return []
+                except Exception as e:
+                    logger.error(f"❌ Erreur lors du rechargement après Cloudflare: {e}")
+                    return []
+            
+            if page_info.get('hasNoResults') or page_info.get('hasError'):
+                logger.warning("Page Memory Express indique 'No results' ou erreur")
+            
+            total_products = page_info.get('productCount1', 0) + page_info.get('productCount2', 0) + page_info.get('productCount3', 0) + page_info.get('productCount4', 0)
+            
+            if total_products == 0:
                 logger.warning("Aucun produit détecté sur la page Memory Express")
                 # Essayer de scroller pour charger plus de contenu
                 await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+                await asyncio.sleep(3)
+                await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await asyncio.sleep(2)
             
             # Essayer d'extraire avec JavaScript d'abord (plus fiable)
@@ -1480,15 +1536,35 @@ class MemoryExpressScraper:
                             '.c-product-tile, .product-tile, .product-item, [data-product-id], article.product, ' +
                             'div[class*="product"], .product-card, .search-result-item, [data-product], ' +
                             '.product-list-item, .search-product, .c-product, [class*="ProductTile"], ' +
-                            '[class*="ProductCard"], [class*="product-card"], [class*="product-item"]'
+                            '[class*="ProductCard"], [class*="product-card"], [class*="product-item"], ' +
+                            '[class*="Product"], [class*="PRODUCT"], .item, [class*="Item"]'
                         );
                         
+                        console.log(`Tentative 1: ${products.length} produits trouvés`);
+                        
                         if (products.length === 0) {{
-                            // Recherche plus large
-                            products = document.querySelectorAll('[class*="product"], [class*="tile"], [class*="item"], [class*="card"]');
+                            // Recherche plus large - chercher n'importe quel élément avec un lien et un prix
+                            const altProducts = document.querySelectorAll('[class*="product"], [class*="tile"], [class*="item"], [class*="card"], [class*="Product"]');
+                            console.log(`Tentative 2: ${altProducts.length} éléments trouvés`);
+                            if (altProducts.length > 0) {{
+                                products = altProducts;
+                            }}
                         }}
                         
-                        console.log(`Trouvé ${products.length} éléments potentiels de produits`);
+                        if (products.length === 0) {{
+                            // Dernière tentative: chercher tous les liens qui contiennent /Products/
+                            const allLinks = document.querySelectorAll('a[href*="/Products/"], a[href*="/Product/"]');
+                            console.log(`Tentative 3: ${allLinks.length} liens produits trouvés`);
+                            // Créer des conteneurs virtuels pour ces liens
+                            if (allLinks.length > 0) {{
+                                products = Array.from(allLinks).map(link => {{
+                                    let parent = link.closest('div, article, section, li');
+                                    return parent || link.parentElement;
+                                }});
+                            }}
+                        }}
+                        
+                        console.log(`Total: ${products.length} éléments potentiels de produits`);
                         
                         for (let i = 0; i < Math.min(products.length, maxResults); i++) {{
                             const product = products[i];
@@ -1610,23 +1686,31 @@ class MemoryExpressScraper:
                     }}
                 """)
                 
+                logger.info(f"📦 Résultats JS bruts: {len(js_results) if js_results else 0} éléments")
+                
                 if js_results and len(js_results) > 0:
                     products_list = []
-                    for result in js_results:
+                    for idx, result in enumerate(js_results):
                         title = result.get('title', '').strip()
                         price = result.get('price')
                         url = result.get('url', '').strip()
                         
+                        logger.debug(f"Produit {idx+1}: title='{title}', price={price}, url='{url}'")
+                        
                         # Valider les données
-                        if not title or not price or price <= 0:
-                            logger.debug(f"Produit Memory Express invalide: title={title}, price={price}")
+                        if not title or title == 'Produit Memory Express' or len(title) < 3:
+                            logger.debug(f"Produit {idx+1} ignoré: titre invalide")
+                            continue
+                        
+                        if not price or price <= 0:
+                            logger.debug(f"Produit {idx+1} ignoré: prix invalide ({price})")
                             continue
                         
                         if url:
                             if not url.startswith('http'):
                                 url = f"https://www.memoryexpress.com{url}"
                             if 'Search' in url or 'search' in url:
-                                # Essayer de trouver un meilleur lien
+                                logger.debug(f"Produit {idx+1} ignoré: URL de recherche")
                                 continue
                         else:
                             url = search_url
@@ -1636,15 +1720,17 @@ class MemoryExpressScraper:
                             "price": float(price),
                             "url": url
                         })
-                        logger.info(f"✅ Produit Memory Express trouvé: {title} - ${price:.2f}")
+                        logger.info(f"✅ Produit Memory Express {idx+1}: {title} - ${price:.2f} CAD")
                     
                     if products_list:
-                        logger.info(f"✅ {len(products_list)} produit(s) Memory Express trouvé(s)")
+                        logger.info(f"✅ {len(products_list)} produit(s) Memory Express valide(s) trouvé(s)")
                         return products_list
                     else:
-                        logger.warning("Aucun produit valide extrait par JavaScript")
+                        logger.warning("⚠️ Aucun produit valide extrait par JavaScript après validation")
+                else:
+                    logger.warning("⚠️ Aucun résultat retourné par JavaScript")
             except Exception as e:
-                logger.error(f"Erreur extraction JS Memory Express: {e}")
+                logger.error(f"❌ Erreur extraction JS Memory Express: {e}")
                 import traceback
                 logger.debug(traceback.format_exc())
             
