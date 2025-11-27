@@ -3470,6 +3470,10 @@ def check_price_comparisons(app: Application) -> None:
                             message += f"🛒 Newegg.ca: ${current_comparison['newegg_price']:.2f} CAD\n"
                             if current_comparison.get('newegg_url'):
                                 message += f"   🔗 {current_comparison['newegg_url']}\n"
+                        if current_comparison.get('memoryexpress_price'):
+                            message += f"🛒 Memory Express: ${current_comparison['memoryexpress_price']:.2f} CAD\n"
+                            if current_comparison.get('memoryexpress_url'):
+                                message += f"   🔗 {current_comparison['memoryexpress_url']}\n"
                         
                         send_message_sync(app, int(user_id), message, loop)
                         logger.info(f"✅ Alerte meilleur prix envoyée à {user_id} pour '{product_name}'")
