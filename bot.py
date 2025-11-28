@@ -7,10 +7,10 @@ import logging
 import re
 import time
 import random
+import signal
+import sys
 from datetime import datetime
 from typing import Dict, Optional, List
-
-import asyncio
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from playwright.async_api import async_playwright, Browser, Page, Playwright
@@ -1389,19 +1389,74 @@ class MemoryExpressScraper:
         self.page: Optional[Page] = None
     
     async def init_browser(self):
-        """Initialise le navigateur Playwright."""
+        """Initialise le navigateur Playwright avec techniques anti-détection avancées pour contourner Cloudflare."""
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
                 headless=True,
-                args=['--no-sandbox', '--disable-blink-features=AutomationControlled']
+                args=[
+                    '--no-sandbox',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process',
+                ]
             )
             context = await self.browser.new_context(
                 user_agent=random.choice(USER_AGENTS),
                 viewport={'width': 1920, 'height': 1080},
                 locale='en-CA',
+                timezone_id='America/Toronto',
+                permissions=[],
+                extra_http_headers={
+                    'Accept-Language': 'en-CA,en;q=0.9,fr;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Cache-Control': 'max-age=0',
+                }
             )
+            
+            # Scripts anti-détection avancés pour contourner Cloudflare
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+                
+                window.navigator.chrome = {
+                    runtime: {},
+                };
+                
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                });
+                
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-CA', 'en', 'fr-CA', 'fr'],
+                });
+                
+                // Masquer les propriétés de Playwright
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => false
+                });
+            """)
+            
             self.page = await context.new_page()
+            
+            # Masquer les propriétés de Playwright sur la page
+            await self.page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => false
+                });
+            """)
         except Exception as e:
             logger.error(f"Erreur lors de l'initialisation du navigateur Memory Express: {e}")
     
@@ -1477,16 +1532,25 @@ class MemoryExpressScraper:
             # Vérifier s'il y a des résultats avec plusieurs méthodes
             page_info = await self.page.evaluate("""
                 () => {
-                    const bodyText = document.body ? document.body.innerText.substring(0, 300) : 'No body';
+                    const bodyText = document.body ? document.body.innerText.substring(0, 500) : 'No body';
+                    const titleText = document.title || '';
                     const info = {
                         bodyText: bodyText,
+                        titleText: titleText,
                         productCount1: document.querySelectorAll('.c-product-tile, .product-tile, .product-item').length,
                         productCount2: document.querySelectorAll('[class*="product"]').length,
                         productCount3: document.querySelectorAll('[class*="Product"]').length,
                         productCount4: document.querySelectorAll('article, [data-product], .product-card').length,
                         hasNoResults: bodyText.includes('No results') || bodyText.includes('no results'),
                         hasError: bodyText.includes('error') || bodyText.includes('Error'),
-                        isCloudflare: bodyText.includes('Verifying you are human') || bodyText.includes('Checking your browser') || bodyText.includes('Just a moment')
+                        isCloudflare: bodyText.includes('Verifying you are human') || 
+                                     bodyText.includes('Verify you are human') ||
+                                     bodyText.includes('Checking your browser') || 
+                                     bodyText.includes('Just a moment') ||
+                                     bodyText.includes('Cloudflare') ||
+                                     titleText.includes('Just a moment') ||
+                                     document.querySelector('#challenge-form') !== null ||
+                                     document.querySelector('.cf-browser-verification') !== null
                     };
                     return info;
                 }
@@ -1496,18 +1560,34 @@ class MemoryExpressScraper:
             
             # Si Cloudflare est détecté, attendre plus longtemps
             if page_info.get('isCloudflare') or is_cloudflare:
-                logger.warning("🛡️ Cloudflare détecté - attente de 10-15 secondes...")
-                await asyncio.sleep(10)
-                # Recharger la page
-                try:
-                    await self.page.reload(wait_until='domcontentloaded', timeout=30000)
+                logger.warning("🛡️ Cloudflare détecté - attente de 15-20 secondes...")
+                # Attendre que Cloudflare se résolve
+                for attempt in range(3):
                     await asyncio.sleep(5)
-                    page_title = await self.page.title()
-                    if 'Just a moment' in page_title:
-                        logger.error("❌ Cloudflare bloque toujours - impossible de scraper Memory Express")
-                        return []
-                except Exception as e:
-                    logger.error(f"❌ Erreur lors du rechargement après Cloudflare: {e}")
+                    # Vérifier si Cloudflare est toujours présent
+                    current_title = await self.page.title()
+                    current_info = await self.page.evaluate("""
+                        () => {
+                            const bodyText = document.body ? document.body.innerText.substring(0, 200) : '';
+                            return {
+                                isCloudflare: bodyText.includes('Verifying') || 
+                                            bodyText.includes('Verify you are human') ||
+                                            bodyText.includes('Checking your browser') ||
+                                            document.title.includes('Just a moment')
+                            };
+                        }
+                    """)
+                    
+                    if not current_info.get('isCloudflare') and 'Just a moment' not in current_title:
+                        logger.info("✅ Cloudflare résolu, continuation...")
+                        break
+                    logger.debug(f"⏳ Tentative {attempt + 1}/3 - Cloudflare toujours présent...")
+                
+                # Vérifier une dernière fois
+                final_title = await self.page.title()
+                if 'Just a moment' in final_title or page_info.get('isCloudflare'):
+                    logger.error("❌ Cloudflare bloque toujours après 3 tentatives - Memory Express non disponible")
+                    logger.warning("💡 Suggestion: Memory Express utilise Cloudflare qui bloque les scrapers automatiques")
                     return []
             
             if page_info.get('hasNoResults') or page_info.get('hasError'):
@@ -3731,8 +3811,107 @@ def main() -> None:
 
     # Démarrer le bot
     logger.info("🤖 Bot démarré !")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    def cleanup():
+        """Fonction de nettoyage propre."""
+        logger.info("🧹 Nettoyage en cours...")
+        
+        # Arrêter le scheduler
+        try:
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+            logger.info("✅ Scheduler arrêté")
+        except Exception as e:
+            logger.debug(f"Erreur arrêt scheduler: {e}")
+        
+        # Fermer les navigateurs de manière asynchrone
+        async def close_all_browsers():
+            """Ferme tous les navigateurs de manière asynchrone."""
+            tasks = []
+            try:
+                if amazon_scraper.browser:
+                    tasks.append(amazon_scraper.close_browser())
+            except:
+                pass
+            try:
+                if newegg_scraper.browser:
+                    tasks.append(newegg_scraper.close_browser())
+            except:
+                pass
+            try:
+                if memoryexpress_scraper.browser:
+                    tasks.append(memoryexpress_scraper.close_browser())
+            except:
+                pass
+            
+            if tasks:
+                try:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                except:
+                    pass
+        
+        # Exécuter le nettoyage avec timeout
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # Timeout de 5 secondes pour éviter de bloquer
+                loop.run_until_complete(asyncio.wait_for(close_all_browsers(), timeout=5.0))
+                logger.info("✅ Navigateurs fermés")
+            except asyncio.TimeoutError:
+                logger.warning("⏱️ Timeout lors de la fermeture des navigateurs")
+            except Exception as e:
+                logger.debug(f"Erreur fermeture navigateurs: {e}")
+            finally:
+                # Fermer proprement la boucle
+                try:
+                    # Annuler toutes les tâches en attente
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except:
+                    pass
+                try:
+                    loop.close()
+                except:
+                    pass
+        except Exception as e:
+            logger.debug(f"Erreur nettoyage: {e}")
+        
+        logger.info("✅ Nettoyage terminé")
+    
+    try:
+        # Sur Windows, utiliser stop_signals=None car l'event loop ne supporte pas add_signal_handler
+        if sys.platform == "win32":
+            application.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
+        else:
+            application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                stop_signals=(signal.SIGINT, signal.SIGTERM)
+            )
+    except KeyboardInterrupt:
+        logger.info("🛑 Interruption clavier détectée...")
+    except SystemExit:
+        logger.info("🛑 Arrêt demandé...")
+    except Exception as e:
+        logger.error(f"❌ Erreur lors de l'exécution: {e}")
+    finally:
+        cleanup()
 
 
 if __name__ == "__main__":
-    main()
+    import signal
+    import sys
+    
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("🛑 Interruption clavier détectée")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"❌ Erreur fatale: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        sys.exit(1)
