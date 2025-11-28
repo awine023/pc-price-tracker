@@ -192,8 +192,21 @@ class NeweggScraper:
             logger.warning("⚠️ Aucun produit trouvé avec les sélecteurs CSS")
             return []
         
-        products_list = []
-        for product_elem in product_elems[:max_results]:
+        # Extraire les mots-clés importants de la requête de recherche
+        query_lower = search_query.lower()
+        # Enlever les mots communs non pertinents
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'what', 'which', 'who', 'whom', 'whose', 'where', 'when', 'why', 'how', 'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'don', 'should', 'now'}
+        query_words = [w for w in re.findall(r'\b\w+\b', query_lower) if w not in stop_words and len(w) > 2]
+        
+        # Si pas assez de mots-clés, prendre les mots les plus longs
+        if len(query_words) < 2:
+            query_words = sorted(re.findall(r'\b\w+\b', query_lower), key=len, reverse=True)[:5]
+        
+        logger.debug(f"🔍 Mots-clés de recherche: {query_words}")
+        
+        # Extraire tous les produits avec leur score de pertinence
+        products_with_scores = []
+        for product_elem in product_elems[:max_results * 3]:  # Prendre plus pour filtrer
             try:
                 # Extraire le titre
                 title = None
@@ -289,16 +302,55 @@ class NeweggScraper:
                 if not url or 'p/pl' in url or 'Search' in url:
                     continue
                 
-                products_list.append({
+                # Calculer le score de pertinence
+                title_lower = title.lower()
+                score = 0
+                
+                # Points pour chaque mot-clé trouvé dans le titre
+                for word in query_words:
+                    if word in title_lower:
+                        score += 2
+                        # Bonus si le mot est au début du titre
+                        if title_lower.startswith(word):
+                            score += 1
+                
+                # Bonus si plusieurs mots-clés sont trouvés
+                matched_words = sum(1 for word in query_words if word in title_lower)
+                if matched_words >= len(query_words) * 0.6:  # Au moins 60% des mots-clés
+                    score += 5
+                
+                # Bonus pour les numéros de modèle (ex: 7800X3D, 4000D)
+                model_numbers = re.findall(r'\d+[A-Z]?\d*[A-Z]?', query_lower)
+                for model in model_numbers:
+                    if model in title_lower:
+                        score += 10  # Gros bonus pour les numéros de modèle
+                
+                products_with_scores.append({
                     "title": title,
                     "price": price,
-                    "url": url
+                    "url": url,
+                    "score": score
                 })
             except Exception as e:
                 logger.debug(f"Erreur extraction produit Newegg: {e}")
                 continue
         
-        logger.info(f"✅ {len(products_list)} produit(s) Newegg trouvé(s) avec curl-cffi")
+        # Trier par score de pertinence (décroissant)
+        products_with_scores.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Filtrer: ne garder que les produits avec un score minimum
+        min_score = 2  # Au moins 1 mot-clé trouvé
+        filtered_products = [p for p in products_with_scores if p['score'] >= min_score]
+        
+        # Prendre les meilleurs résultats
+        products_list = [{"title": p["title"], "price": p["price"], "url": p["url"]} 
+                        for p in filtered_products[:max_results]]
+        
+        if products_list:
+            logger.info(f"✅ {len(products_list)} produit(s) Newegg trouvé(s) avec curl-cffi (filtrés par pertinence)")
+        else:
+            logger.warning(f"⚠️ Aucun produit pertinent trouvé (scores: {[p['score'] for p in products_with_scores[:5]]})")
+        
         return products_list
     
     async def search_products(self, search_query: str, max_results: int = 3) -> List[Dict]:
@@ -355,8 +407,17 @@ class NeweggScraper:
             if not product_elems:
                 return []
             
-            products_list = []
-            for product_elem in product_elems[:max_results]:
+            # Extraire les mots-clés importants de la requête de recherche
+            query_lower = search_query.lower()
+            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'what', 'which', 'who', 'whom', 'whose', 'where', 'when', 'why', 'how', 'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'don', 'should', 'now'}
+            query_words = [w for w in re.findall(r'\b\w+\b', query_lower) if w not in stop_words and len(w) > 2]
+            
+            if len(query_words) < 2:
+                query_words = sorted(re.findall(r'\b\w+\b', query_lower), key=len, reverse=True)[:5]
+            
+            # Extraire tous les produits avec leur score de pertinence
+            products_with_scores = []
+            for product_elem in product_elems[:max_results * 3]:
                 try:
                     # Extraire le titre
                     title = None
@@ -425,14 +486,48 @@ class NeweggScraper:
                     if not url or 'p/pl' in url or 'Search' in url:
                         continue
                     
-                    products_list.append({
+                    # Calculer le score de pertinence
+                    title_lower = title.lower()
+                    score = 0
+                    
+                    # Points pour chaque mot-clé trouvé dans le titre
+                    for word in query_words:
+                        if word in title_lower:
+                            score += 2
+                            if title_lower.startswith(word):
+                                score += 1
+                    
+                    # Bonus si plusieurs mots-clés sont trouvés
+                    matched_words = sum(1 for word in query_words if word in title_lower)
+                    if matched_words >= len(query_words) * 0.6:
+                        score += 5
+                    
+                    # Bonus pour les numéros de modèle
+                    model_numbers = re.findall(r'\d+[A-Z]?\d*[A-Z]?', query_lower)
+                    for model in model_numbers:
+                        if model in title_lower:
+                            score += 10
+                    
+                    products_with_scores.append({
                         "title": title,
                         "price": price,
-                        "url": url
+                        "url": url,
+                        "score": score
                     })
                 except Exception as e:
                     logger.debug(f"Erreur extraction produit Newegg: {e}")
                     continue
+            
+            # Trier par score de pertinence
+            products_with_scores.sort(key=lambda x: x['score'], reverse=True)
+            
+            # Filtrer: ne garder que les produits avec un score minimum
+            min_score = 2
+            filtered_products = [p for p in products_with_scores if p['score'] >= min_score]
+            
+            # Prendre les meilleurs résultats
+            products_list = [{"title": p["title"], "price": p["price"], "url": p["url"]} 
+                            for p in filtered_products[:max_results]]
             
             return products_list
         except Exception as e:
