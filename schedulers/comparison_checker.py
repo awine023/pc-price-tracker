@@ -6,7 +6,7 @@ from telegram.ext import Application
 
 from utils.helpers import send_message_sync
 from database import db
-from scrapers import AmazonScraper, NeweggScraper, MemoryExpressScraper
+from scrapers import AmazonScraper, NeweggScraper, MemoryExpressScraper, CanadaComputersScraper
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +14,15 @@ logger = logging.getLogger(__name__)
 amazon_scraper = None
 newegg_scraper = None
 memoryexpress_scraper = None
+canadacomputers_scraper = None
 
-def set_scrapers(amazon, newegg, memoryexpress):
+def set_scrapers(amazon, newegg, memoryexpress, canadacomputers):
     """Configure les scrapers depuis bot.py."""
-    global amazon_scraper, newegg_scraper, memoryexpress_scraper
+    global amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper
     amazon_scraper = amazon
     newegg_scraper = newegg
     memoryexpress_scraper = memoryexpress
+    canadacomputers_scraper = canadacomputers
 
 def check_price_comparisons(app: Application) -> None:
     """Vérifie les prix des produits à comparer sur les 3 sites toutes les 60 minutes."""
@@ -85,13 +87,24 @@ def check_price_comparisons(app: Application) -> None:
                     logger.error(f"Erreur recherche Memory Express pour '{product_name}': {e}")
                     memoryexpress_result = None
                 
+                # Canada Computers - récupérer plusieurs produits et prendre le meilleur
+                canadacomputers_result = None
+                try:
+                    canadacomputers_results = loop.run_until_complete(
+                        canadacomputers_scraper.search_products(search_query, max_results=3)
+                    )
+                    canadacomputers_result = min(canadacomputers_results, key=lambda x: x.get("price", float('inf'))) if canadacomputers_results else None
+                except Exception as e:
+                    logger.error(f"Erreur recherche Canada Computers pour '{product_name}': {e}")
+                    canadacomputers_result = None
+                
                 # Mettre à jour la base de données
                 db.update_price_comparison(
                     comparison_id,
                     amazon_price=amazon_result.get("price") if amazon_result else None,
                     amazon_url=amazon_result.get("url") if amazon_result else None,
-                    canadacomputers_price=None,
-                    canadacomputers_url=None,
+                    canadacomputers_price=canadacomputers_result.get("price") if canadacomputers_result else None,
+                    canadacomputers_url=canadacomputers_result.get("url") if canadacomputers_result else None,
                     newegg_price=newegg_result.get("price") if newegg_result else None,
                     newegg_url=newegg_result.get("url") if newegg_result else None,
                     memoryexpress_price=memoryexpress_result.get("price") if memoryexpress_result else None,

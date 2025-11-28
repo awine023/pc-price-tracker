@@ -14,15 +14,17 @@ logger = logging.getLogger(__name__)
 amazon_scraper = None
 newegg_scraper = None
 memoryexpress_scraper = None
+canadacomputers_scraper = None
 price_analyzer = None
 global_application = None
 
-def set_scrapers(amazon, newegg, memoryexpress, analyzer):
+def set_scrapers(amazon, newegg, memoryexpress, canadacomputers, analyzer):
     """Configure les scrapers depuis bot.py."""
-    global amazon_scraper, newegg_scraper, memoryexpress_scraper, price_analyzer
+    global amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper, price_analyzer
     amazon_scraper = amazon
     newegg_scraper = newegg
     memoryexpress_scraper = memoryexpress
+    canadacomputers_scraper = canadacomputers
     price_analyzer = analyzer
 
 def set_application(app):
@@ -363,7 +365,7 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     search_query = product_name
     
     await update.message.reply_text(
-        f"⏳ Recherche de '{product_name}' sur les 3 sites...\n"
+        f"⏳ Recherche de '{product_name}' sur les 4 sites...\n"
         "Cela peut prendre quelques instants."
     )
     
@@ -408,6 +410,16 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception as e:
             logger.error(f"Erreur recherche Memory Express: {e}")
         
+        # Canada Computers - retourne une liste de produits, prendre seulement le premier (produit principal)
+        canadacomputers_result = None
+        try:
+            canadacomputers_results = await canadacomputers_scraper.search_products(search_query, max_results=3)
+            if canadacomputers_results:
+                # Prendre le premier produit (le plus pertinent)
+                canadacomputers_result = canadacomputers_results[0]
+        except Exception as e:
+            logger.error(f"Erreur recherche Canada Computers: {e}")
+        
         # Collecter tous les prix pour trouver le meilleur (un seul par site)
         all_prices = []
         if amazon_result and amazon_result.get("price"):
@@ -418,6 +430,9 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         if memoryexpress_result and memoryexpress_result.get("price"):
             all_prices.append(("Memory Express", memoryexpress_result["price"], memoryexpress_result.get("url", ""), memoryexpress_result.get("title", product_name)))
+        
+        if canadacomputers_result and canadacomputers_result.get("price"):
+            all_prices.append(("Canada Computers", canadacomputers_result["price"], canadacomputers_result.get("url", ""), canadacomputers_result.get("title", product_name)))
         
         if not all_prices:
             await update.message.reply_text(
@@ -442,8 +457,8 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             comparison_id,
             amazon_price=amazon_result.get("price") if amazon_result else None,
             amazon_url=amazon_result.get("url") if amazon_result else None,
-            canadacomputers_price=None,
-            canadacomputers_url=None,
+            canadacomputers_price=canadacomputers_result.get("price") if canadacomputers_result else None,
+            canadacomputers_url=canadacomputers_result.get("url") if canadacomputers_result else None,
             newegg_price=newegg_result.get("price") if newegg_result else None,
             newegg_url=newegg_result.get("url") if newegg_result else None,
             memoryexpress_price=memoryexpress_result.get("price") if memoryexpress_result else None,
@@ -483,6 +498,16 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             message += f"🔗 {memoryexpress_result.get('url', '')}\n\n"
         else:
             message += f"**🛒 Memory Express**\n"
+            message += f"❌ Aucun produit trouvé ou erreur de connexion\n\n"
+        
+        # Afficher Canada Computers (produit principal uniquement)
+        if canadacomputers_result and canadacomputers_result.get("price"):
+            message += f"**🛒 Canada Computers**\n"
+            message += f"💰 ${canadacomputers_result['price']:.2f} CAD\n"
+            message += f"📦 {canadacomputers_result.get('title', product_name)}\n"
+            message += f"🔗 {canadacomputers_result.get('url', '')}\n\n"
+        else:
+            message += f"**🛒 Canada Computers**\n"
             message += f"❌ Aucun produit trouvé ou erreur de connexion\n\n"
         
         message += f"✅ Comparaison sauvegardée. Mise à jour automatique toutes les 60 minutes."

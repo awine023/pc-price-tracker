@@ -20,7 +20,7 @@ from price_analyzer import PriceAnalyzer
 from database import db
 
 # Imports modulaires
-from scrapers import AmazonScraper, NeweggScraper, MemoryExpressScraper
+from scrapers import AmazonScraper, NeweggScraper, MemoryExpressScraper, CanadaComputersScraper
 from commands import (
     start_command,
     add_command,
@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 amazon_scraper = AmazonScraper()
 newegg_scraper = NeweggScraper()
 memoryexpress_scraper = MemoryExpressScraper()
+canadacomputers_scraper = CanadaComputersScraper()
 price_analyzer = PriceAnalyzer(
     big_discount_threshold=30.0,
     price_error_threshold=50.0,
@@ -78,10 +79,10 @@ def main() -> None:
         return
 
     # Configurer les scrapers dans les modules
-    set_command_scrapers(amazon_scraper, newegg_scraper, memoryexpress_scraper, price_analyzer)
+    set_command_scrapers(amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper, price_analyzer)
     set_global_scrapers(amazon_scraper, price_analyzer)
     set_price_checker_scrapers(amazon_scraper, price_analyzer)
-    set_comparison_scrapers(amazon_scraper, newegg_scraper, memoryexpress_scraper)
+    set_comparison_scrapers(amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper)
 
     # Créer l'application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -184,6 +185,11 @@ def main() -> None:
                     try:
                         if hasattr(memoryexpress_scraper, 'browser') and memoryexpress_scraper.browser:
                             tasks.append(memoryexpress_scraper.close_browser())
+                    except:
+                        pass
+                    try:
+                        if hasattr(canadacomputers_scraper, 'browser') and canadacomputers_scraper.browser:
+                            tasks.append(canadacomputers_scraper.close_browser())
                     except:
                         pass
                     
