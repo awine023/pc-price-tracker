@@ -14,12 +14,13 @@ from typing import Dict, Optional, List
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from playwright.async_api import async_playwright, Browser, Page, Playwright
+
+# Essayer d'importer curl-cffi pour un meilleur contournement de Cloudflare
 try:
     from curl_cffi import requests as curl_requests
     CURL_CFFI_AVAILABLE = True
 except ImportError:
     CURL_CFFI_AVAILABLE = False
-    logger.warning("curl-cffi non disponible - installation: pip install curl-cffi")
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Update
 from telegram.ext import (
