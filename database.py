@@ -499,6 +499,19 @@ class Database:
         conn.close()
         return [dict(row) for row in rows]
     
+    def get_user_comparisons(self, user_id: str) -> List[Dict]:
+        """Récupère toutes les comparaisons d'un utilisateur."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM price_comparisons 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+        """, (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    
     def get_comparison_by_id(self, comparison_id: int) -> Optional[Dict]:
         """Récupère une comparaison par son ID."""
         conn = self.get_connection()

@@ -170,11 +170,14 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Obtenir les big deals et erreurs de prix
     big_deals = db.get_big_deals(limit=20)  # Limiter à 20 pour éviter les messages trop longs
     price_errors = db.get_price_errors(limit=20)
+    
+    # Obtenir les comparaisons de prix de l'utilisateur
+    user_comparisons = db.get_user_comparisons(user_id)
 
-    if not user_products and not user_categories and not big_deals and not price_errors:
+    if not user_products and not user_categories and not user_comparisons and not big_deals and not price_errors:
         await update.message.reply_text(
-            "📭 Vous n'avez aucun produit ou catégorie surveillé.\n"
-            "Utilisez /add pour ajouter un produit ou /category pour surveiller une catégorie."
+            "📭 Vous n'avez aucun produit, catégorie ou comparaison surveillé.\n"
+            "Utilisez /add pour ajouter un produit, /category pour surveiller une catégorie, ou /compare pour comparer les prix."
         )
         return
 
@@ -199,6 +202,44 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             message += f"📂 **{category['name']}**\n"
             message += f"📊 {category.get('product_count', 0)} produits\n"
             message += f"🎉 {category.get('discounted_count', 0)} en rabais\n\n"
+    
+    # Afficher les comparaisons de prix
+    if user_comparisons:
+        if message:
+            message += "\n"
+        message += "🛒 **Vos comparaisons de prix :**\n\n"
+        for comparison in user_comparisons[:10]:  # Limiter à 10 pour le message
+            product_name = comparison.get('product_name', 'Produit inconnu')
+            best_price = comparison.get('best_price')
+            best_site = comparison.get('best_site', '').title()
+            
+            message += f"🛒 **{product_name}**\n"
+            
+            if best_price:
+                message += f"💰 Meilleur prix: ${best_price:.2f} CAD ({best_site})\n"
+                
+                # Afficher les prix de chaque site
+                amazon_price = comparison.get('amazon_price')
+                newegg_price = comparison.get('newegg_price')
+                memoryexpress_price = comparison.get('memoryexpress_price')
+                
+                prices_info = []
+                if amazon_price:
+                    prices_info.append(f"Amazon: ${amazon_price:.2f}")
+                if newegg_price:
+                    prices_info.append(f"Newegg: ${newegg_price:.2f}")
+                if memoryexpress_price:
+                    prices_info.append(f"Memory Express: ${memoryexpress_price:.2f}")
+                
+                if prices_info:
+                    message += f"📊 {' | '.join(prices_info)}\n"
+            else:
+                message += f"⏳ En attente de vérification...\n"
+            
+            message += f"🔍 Recherche: {comparison.get('search_query', 'N/A')}\n\n"
+        
+        if len(user_comparisons) > 10:
+            message += f"📊 ... et {len(user_comparisons) - 10} autres comparaisons.\n\n"
     
     # Afficher les big deals
     if big_deals:
