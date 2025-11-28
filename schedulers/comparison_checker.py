@@ -6,7 +6,7 @@ from telegram.ext import Application
 
 from utils.helpers import send_message_sync
 from database import db
-from scrapers import AmazonScraper, NeweggScraper, MemoryExpressScraper, CanadaComputersScraper
+from scrapers import AmazonScraper, NeweggScraper, MemoryExpressScraper, CanadaComputersScraper, BestBuyScraper
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +15,16 @@ amazon_scraper = None
 newegg_scraper = None
 memoryexpress_scraper = None
 canadacomputers_scraper = None
+bestbuy_scraper = None
 
-def set_scrapers(amazon, newegg, memoryexpress, canadacomputers):
+def set_scrapers(amazon, newegg, memoryexpress, canadacomputers, bestbuy):
     """Configure les scrapers depuis bot.py."""
-    global amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper
+    global amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper, bestbuy_scraper
     amazon_scraper = amazon
     newegg_scraper = newegg
     memoryexpress_scraper = memoryexpress
     canadacomputers_scraper = canadacomputers
+    bestbuy_scraper = bestbuy
 
 def check_price_comparisons(app: Application) -> None:
     """Vérifie les prix des produits à comparer sur les 3 sites toutes les 60 minutes."""
@@ -98,6 +100,17 @@ def check_price_comparisons(app: Application) -> None:
                     logger.error(f"Erreur recherche Canada Computers pour '{product_name}': {e}")
                     canadacomputers_result = None
                 
+                # Best Buy - récupérer plusieurs produits et prendre le meilleur
+                bestbuy_result = None
+                try:
+                    bestbuy_results = loop.run_until_complete(
+                        bestbuy_scraper.search_products(search_query, max_results=3)
+                    )
+                    bestbuy_result = min(bestbuy_results, key=lambda x: x.get("price", float('inf'))) if bestbuy_results else None
+                except Exception as e:
+                    logger.error(f"Erreur recherche Best Buy pour '{product_name}': {e}")
+                    bestbuy_result = None
+                
                 # Mettre à jour la base de données
                 db.update_price_comparison(
                     comparison_id,
@@ -108,7 +121,9 @@ def check_price_comparisons(app: Application) -> None:
                     newegg_price=newegg_result.get("price") if newegg_result else None,
                     newegg_url=newegg_result.get("url") if newegg_result else None,
                     memoryexpress_price=memoryexpress_result.get("price") if memoryexpress_result else None,
-                    memoryexpress_url=memoryexpress_result.get("url") if memoryexpress_result else None
+                    memoryexpress_url=memoryexpress_result.get("url") if memoryexpress_result else None,
+                    bestbuy_price=bestbuy_result.get("price") if bestbuy_result else None,
+                    bestbuy_url=bestbuy_result.get("url") if bestbuy_result else None
                 )
                 
                 # Récupérer les prix mis à jour

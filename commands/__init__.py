@@ -15,16 +15,18 @@ amazon_scraper = None
 newegg_scraper = None
 memoryexpress_scraper = None
 canadacomputers_scraper = None
+bestbuy_scraper = None
 price_analyzer = None
 global_application = None
 
-def set_scrapers(amazon, newegg, memoryexpress, canadacomputers, analyzer):
+def set_scrapers(amazon, newegg, memoryexpress, canadacomputers, bestbuy, analyzer):
     """Configure les scrapers depuis bot.py."""
-    global amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper, price_analyzer
+    global amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper, bestbuy_scraper, price_analyzer
     amazon_scraper = amazon
     newegg_scraper = newegg
     memoryexpress_scraper = memoryexpress
     canadacomputers_scraper = canadacomputers
+    bestbuy_scraper = bestbuy
     price_analyzer = analyzer
 
 def set_application(app):
@@ -357,7 +359,9 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "Le bot comparera automatiquement les prix toutes les 60 minutes sur :\n"
             "🛒 Amazon.ca\n"
             "🛒 Newegg.ca\n"
-            "🛒 Memory Express"
+            "🛒 Memory Express\n"
+            "🛒 Canada Computers\n"
+            "🛒 Best Buy"
         )
         return
     
@@ -365,7 +369,7 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     search_query = product_name
     
     await update.message.reply_text(
-        f"⏳ Recherche de '{product_name}' sur les 4 sites...\n"
+        f"⏳ Recherche de '{product_name}' sur les 5 sites...\n"
         "Cela peut prendre quelques instants."
     )
     
@@ -420,6 +424,16 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception as e:
             logger.error(f"Erreur recherche Canada Computers: {e}")
         
+        # Best Buy - retourne une liste de produits, prendre seulement le premier (produit principal)
+        bestbuy_result = None
+        try:
+            bestbuy_results = await bestbuy_scraper.search_products(search_query, max_results=3)
+            if bestbuy_results:
+                # Prendre le premier produit (le plus pertinent)
+                bestbuy_result = bestbuy_results[0]
+        except Exception as e:
+            logger.error(f"Erreur recherche Best Buy: {e}")
+        
         # Collecter tous les prix pour trouver le meilleur (un seul par site)
         all_prices = []
         if amazon_result and amazon_result.get("price"):
@@ -434,9 +448,12 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if canadacomputers_result and canadacomputers_result.get("price"):
             all_prices.append(("Canada Computers", canadacomputers_result["price"], canadacomputers_result.get("url", ""), canadacomputers_result.get("title", product_name)))
         
+        if bestbuy_result and bestbuy_result.get("price"):
+            all_prices.append(("Best Buy", bestbuy_result["price"], bestbuy_result.get("url", ""), bestbuy_result.get("title", product_name)))
+        
         if not all_prices:
             await update.message.reply_text(
-                f"❌ Aucun produit trouvé pour '{product_name}' sur les 3 sites.\n\n"
+                f"❌ Aucun produit trouvé pour '{product_name}' sur les 5 sites.\n\n"
                 "**Suggestions :**\n"
                 "• Vérifiez l'orthographe\n"
                 "• Essayez un terme plus spécifique\n"
@@ -462,7 +479,9 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             newegg_price=newegg_result.get("price") if newegg_result else None,
             newegg_url=newegg_result.get("url") if newegg_result else None,
             memoryexpress_price=memoryexpress_result.get("price") if memoryexpress_result else None,
-            memoryexpress_url=memoryexpress_result.get("url") if memoryexpress_result else None
+            memoryexpress_url=memoryexpress_result.get("url") if memoryexpress_result else None,
+            bestbuy_price=bestbuy_result.get("price") if bestbuy_result else None,
+            bestbuy_url=bestbuy_result.get("url") if bestbuy_result else None
         )
         
         # Construire le message de comparaison avec le produit principal de chaque site
@@ -508,6 +527,16 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             message += f"🔗 {canadacomputers_result.get('url', '')}\n\n"
         else:
             message += f"**🛒 Canada Computers**\n"
+            message += f"❌ Aucun produit trouvé ou erreur de connexion\n\n"
+        
+        # Afficher Best Buy (produit principal uniquement)
+        if bestbuy_result and bestbuy_result.get("price"):
+            message += f"**🛒 Best Buy**\n"
+            message += f"💰 ${bestbuy_result['price']:.2f} CAD\n"
+            message += f"📦 {bestbuy_result.get('title', product_name)}\n"
+            message += f"🔗 {bestbuy_result.get('url', '')}\n\n"
+        else:
+            message += f"**🛒 Best Buy**\n"
             message += f"❌ Aucun produit trouvé ou erreur de connexion\n\n"
         
         message += f"✅ Comparaison sauvegardée. Mise à jour automatique toutes les 60 minutes."
