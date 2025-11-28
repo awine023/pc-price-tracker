@@ -67,91 +67,130 @@ class BestBuyScraper:
     
     async def _search_with_api(self, search_query: str, max_results: int = 3) -> List[Dict]:
         """Recherche avec l'API Best Buy (plus fiable que le scraping DOM)."""
+        # Simplifier la requête de recherche (enlever les détails superflus)
+        # Ex: "corsair frame 4000D ARGB mid-tower ATX computer case - black" -> "corsair 4000D"
+        simplified_query = search_query
+        # Garder seulement les mots-clés importants (marque + modèle principal)
+        words = search_query.split()
+        if len(words) > 5:
+            # Prendre les premiers mots (marque) + chercher un numéro de modèle
+            simplified_query = ' '.join(words[:3])  # Prendre les 3 premiers mots
+            # Chercher un numéro de modèle (ex: 4000D, 7800X3D)
+            import re
+            model_match = re.search(r'\d+[A-Z]?\d*[A-Z]?', search_query)
+            if model_match:
+                simplified_query += ' ' + model_match.group()
+        
+        # Essayer d'abord avec la requête simplifiée, puis avec la requête complète
+        queries_to_try = [simplified_query]
+        if simplified_query != search_query:
+            queries_to_try.append(search_query)
+        
         api_url = "https://www.bestbuy.ca/api/v2/json/search"
-        params = {
-            "query": search_query,
-            "page": 1,
-            "pageSize": max_results,
-            "lang": "fr-CA"
-        }
         
         headers = {
             'Accept': 'application/json',
-            'Accept-Language': 'fr-CA,fr;q=0.9,en-CA;q=0.8,en;q=0.7',
+            'Accept-Language': 'en-CA,en;q=0.9,fr-CA;q=0.8,fr;q=0.7',
             'User-Agent': random.choice(USER_AGENTS),
             'Referer': 'https://www.bestbuy.ca/',
         }
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(api_url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        products_list = []
-                        # La structure de la réponse peut varier, on essaie plusieurs chemins
-                        products = data.get('products', [])
-                        if not products:
-                            products = data.get('results', [])
-                        if not products:
-                            products = data.get('data', {}).get('products', [])
-                        
-                        for product in products[:max_results]:
-                            try:
-                                # Extraire le titre
-                                title = product.get('name') or product.get('title') or product.get('productName') or "Produit Best Buy"
-                                
-                                # Extraire le prix
-                                price = None
-                                # Essayer plusieurs chemins pour le prix
-                                price = product.get('salePrice') or product.get('regularPrice') or product.get('price') or product.get('currentPrice')
-                                
-                                # Si c'est un dictionnaire, chercher dans les sous-éléments
-                                if isinstance(price, dict):
-                                    price = price.get('value') or price.get('amount') or price.get('price')
-                                
-                                # Convertir en float
-                                if price:
-                                    try:
-                                        price = float(price)
-                                    except (ValueError, TypeError):
-                                        price = None
-                                
-                                if not price or price <= 0:
+        for query in queries_to_try:
+            try:
+                params = {
+                    "query": query,
+                    "page": 1,
+                    "pageSize": max_results * 2,  # Prendre plus pour filtrer
+                    "lang": "en-CA"
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(api_url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            
+                            # Debug: logger la structure de la réponse
+                            logger.debug(f"📊 Structure réponse Best Buy: {list(data.keys())}")
+                            
+                            products_list = []
+                            # La structure de la réponse peut varier, on essaie plusieurs chemins
+                            products = data.get('products', [])
+                            if not products:
+                                products = data.get('results', [])
+                            if not products:
+                                products = data.get('data', {}).get('products', [])
+                            if not products and isinstance(data, list):
+                                products = data
+                            
+                            logger.debug(f"📦 Nombre de produits trouvés dans la réponse: {len(products) if products else 0}")
+                            
+                            for product in products[:max_results * 2]:
+                                try:
+                                    # Extraire le titre
+                                    title = product.get('name') or product.get('title') or product.get('productName') or "Produit Best Buy"
+                                    
+                                    # Extraire le prix
+                                    price = None
+                                    # Essayer plusieurs chemins pour le prix
+                                    price = (
+                                        product.get('salePrice') or 
+                                        product.get('regularPrice') or 
+                                        product.get('price') or 
+                                        product.get('currentPrice') or
+                                        product.get('customerPrice') or
+                                        product.get('pricing', {}).get('current')
+                                    )
+                                    
+                                    # Si c'est un dictionnaire, chercher dans les sous-éléments
+                                    if isinstance(price, dict):
+                                        price = price.get('value') or price.get('amount') or price.get('price') or price.get('current')
+                                    
+                                    # Convertir en float
+                                    if price:
+                                        try:
+                                            price = float(price)
+                                        except (ValueError, TypeError):
+                                            price = None
+                                    
+                                    if not price or price <= 0:
+                                        continue
+                                    
+                                    # Extraire l'URL
+                                    url = None
+                                    sku = product.get('sku') or product.get('productId') or product.get('id')
+                                    if sku:
+                                        url = f"https://www.bestbuy.ca/fr-ca/produit/{sku}"
+                                    else:
+                                        url = product.get('url') or product.get('productUrl')
+                                        if url and not url.startswith('http'):
+                                            url = f"https://www.bestbuy.ca{url}"
+                                    
+                                    if not url:
+                                        continue
+                                    
+                                    products_list.append({
+                                        "title": title,
+                                        "price": price,
+                                        "url": url
+                                    })
+                                    
+                                    if len(products_list) >= max_results:
+                                        break
+                                except Exception as e:
+                                    logger.debug(f"Erreur parsing produit Best Buy: {e}")
                                     continue
-                                
-                                # Extraire l'URL
-                                url = None
-                                sku = product.get('sku') or product.get('productId') or product.get('id')
-                                if sku:
-                                    url = f"https://www.bestbuy.ca/fr-ca/produit/{sku}"
-                                else:
-                                    url = product.get('url') or product.get('productUrl')
-                                    if url and not url.startswith('http'):
-                                        url = f"https://www.bestbuy.ca{url}"
-                                
-                                if not url:
-                                    continue
-                                
-                                products_list.append({
-                                    "title": title,
-                                    "price": price,
-                                    "url": url
-                                })
-                            except Exception as e:
-                                logger.debug(f"Erreur parsing produit Best Buy: {e}")
-                                continue
-                        
-                        if products_list:
-                            logger.info(f"✅ {len(products_list)} produit(s) Best Buy trouvé(s) via API")
-                        
-                        return products_list
-                    else:
-                        logger.warning(f"API Best Buy retourné {response.status}")
-                        return []
-        except Exception as e:
-            logger.warning(f"Erreur API Best Buy: {e}")
-            return []
+                            
+                            if products_list:
+                                logger.info(f"✅ {len(products_list)} produit(s) Best Buy trouvé(s) via API (requête: '{query}')")
+                                return products_list
+                        else:
+                            logger.debug(f"API Best Buy retourné {response.status} pour '{query}'")
+            except Exception as e:
+                logger.debug(f"Erreur API Best Buy avec '{query}': {e}")
+                continue
+        
+        logger.warning(f"⚠️ API Best Buy n'a pas retourné de résultats pour '{search_query}'")
+        return []
     
     async def search_products(self, search_query: str, max_results: int = 3) -> List[Dict]:
         """Recherche des produits sur Best Buy et retourne plusieurs résultats."""
