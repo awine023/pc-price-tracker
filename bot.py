@@ -1482,9 +1482,191 @@ class MemoryExpressScraper:
         self.browser = None
         self.playwright = None
     
+    def _search_with_curl_cffi(self, search_query: str, max_results: int = 3) -> List[Dict]:
+        """Recherche avec curl-cffi (meilleur pour contourner Cloudflare) - méthode synchrone."""
+        search_url = f"https://www.memoryexpress.com/Search/{search_query.replace(' ', '%20')}"
+        logger.info(f"🔍 Recherche Memory Express avec curl-cffi: {search_query}")
+        
+        try:
+            # curl-cffi simule un vrai navigateur Chrome
+            response = curl_requests.get(
+                search_url,
+                impersonate="chrome110",  # Simule Chrome 110
+                timeout=30,
+                headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-CA,en;q=0.9,fr;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                }
+            )
+            
+            if response.status_code != 200:
+                logger.warning(f"Memory Express retourné {response.status_code}")
+                return []
+            
+            # Vérifier si Cloudflare bloque
+            if 'Just a moment' in response.text or 'Verify you are human' in response.text:
+                logger.warning("⚠️ Cloudflare détecté même avec curl-cffi")
+                return []
+            
+            # Parser le HTML
+            soup = BeautifulSoup(response.text, 'lxml')
+            
+            # Chercher les produits
+            products_list = []
+            product_elems = []
+            
+            selectors = [
+                'div.c-product-tile',
+                'div.product-tile',
+                'div.product-item',
+                'div[class*="product"]',
+                'article.product',
+                '.product-card',
+                '.search-result-item'
+            ]
+            
+            for selector in selectors:
+                product_elems = soup.select(selector)
+                if product_elems:
+                    logger.debug(f"Trouvé {len(product_elems)} produits avec {selector}")
+                    break
+            
+            if not product_elems:
+                logger.warning("Aucun produit trouvé avec curl-cffi")
+                return []
+            
+            for product_elem in product_elems[:max_results]:
+                # Extraire le titre
+                title = None
+                title_selectors = ['a[title]', 'h2', 'h3', '.product-name', '.product-title', '[class*="title"]', 'a']
+                for selector in title_selectors:
+                    title_elem = product_elem.select_one(selector)
+                    if title_elem:
+                        title = title_elem.get('title') or title_elem.get_text(strip=True)
+                        if title:
+                            break
+                
+                if not title:
+                    title = "Produit Memory Express"
+                
+                # Extraire le prix
+                price = None
+                price_selectors = [
+                    '.price', '.product-price', '.price-current',
+                    '.price-regular', 'strong.price', 'span.price', 
+                    '[class*="price"]', '.c-price', '.price-box'
+                ]
+                
+                for selector in price_selectors:
+                    price_elem = product_elem.select_one(selector)
+                    if price_elem:
+                        price_text = price_elem.get_text(strip=True)
+                        price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_text)
+                        if price_match:
+                            try:
+                                test_price = float(price_match.group(1).replace(',', ''))
+                                if 1 < test_price < 100000:
+                                    price = test_price
+                                    break
+                            except ValueError:
+                                continue
+                
+                if not price:
+                    all_text = product_elem.get_text()
+                    price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
+                    for match in price_matches:
+                        try:
+                            test_price = float(match.replace(',', ''))
+                            if 1 < test_price < 100000:
+                                price = test_price
+                                break
+                        except ValueError:
+                            continue
+                
+                if not price or price <= 0:
+                    continue
+                
+                # Extraire l'URL
+                url = None
+                url_selectors = [
+                    'a[href*="/Products/"]',
+                    'a[href*="/Product/"]',
+                    'a.product-link',
+                    'h2 a', 'h3 a',
+                    'a[title]',
+                    'a[href]'
+                ]
+                
+                for selector in url_selectors:
+                    url_elems = product_elem.select(selector)
+                    for url_elem in url_elems:
+                        href = url_elem.get('href')
+                        if href and not href.startswith('javascript:'):
+                            if ('/Products/' in href or '/Product/' in href) and \
+                               'Search' not in href and 'search' not in href:
+                                url = href
+                                break
+                    if url:
+                        break
+                
+                if not url:
+                    all_links = product_elem.select('a[href]')
+                    for link in all_links:
+                        href = link.get('href')
+                        if href and not href.startswith('javascript:') and \
+                           'Search' not in href and 'search' not in href:
+                            url = href
+                            break
+                
+                if url:
+                    if not url.startswith('http'):
+                        url = f"https://www.memoryexpress.com{url}"
+                else:
+                    url = search_url
+                
+                products_list.append({
+                    "title": title,
+                    "price": price,
+                    "url": url
+                })
+                logger.info(f"✅ Produit Memory Express (curl-cffi): {title} - ${price:.2f}")
+            
+            if products_list:
+                logger.info(f"✅ {len(products_list)} produit(s) Memory Express trouvé(s) avec curl-cffi")
+            
+            return products_list
+        except Exception as e:
+            logger.error(f"Erreur avec curl-cffi: {e}")
+            return []
+    
     async def search_products(self, search_query: str, max_results: int = 3) -> List[Dict]:
         """Recherche des produits sur Memory Express et retourne plusieurs résultats."""
         try:
+            # Essayer d'abord avec curl-cffi (meilleur pour Cloudflare)
+            if CURL_CFFI_AVAILABLE:
+                try:
+                    # curl-cffi est synchrone, donc on l'exécute dans un thread
+                    import concurrent.futures
+                    loop = asyncio.get_event_loop()
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        result = await loop.run_in_executor(
+                            executor, 
+                            self._search_with_curl_cffi, 
+                            search_query, 
+                            max_results
+                        )
+                    if result:
+                        return result
+                except Exception as e:
+                    logger.warning(f"curl-cffi échoué, fallback sur Playwright: {e}")
+            
+            # Fallback sur Playwright
             if not self.page or not self.browser:
                 await self.init_browser()
             
