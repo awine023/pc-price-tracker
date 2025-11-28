@@ -1565,7 +1565,8 @@ class MemoryExpressScraper:
                             }}
                         }}
                         
-                        console.log(`Total: ${products ? products.length : 0} éléments potentiels de produits`);
+                        const totalCount = products ? products.length : 0;
+                        console.log(`Total: ${totalCount} éléments potentiels de produits`);
                         
                         if (!products || products.length === 0) {{
                             console.log('Aucun produit trouvé');
