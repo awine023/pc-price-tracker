@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 
 from utils.helpers import extract_asin, load_data
 from database import db
-from config import CHECK_INTERVAL_MINUTES
+from config import CHECK_INTERVAL_MINUTES, BIG_DISCOUNT_THRESHOLD, GLOBAL_SCAN_INTERVAL_MINUTES, PRICE_ERROR_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
