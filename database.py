@@ -190,15 +190,6 @@ class Database:
         conn.commit()
         conn.close()
     
-    def get_user(self, user_id: str) -> Optional[Dict]:
-        """Récupère un utilisateur."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
-    
     # ========================================================================
     # MÉTHODES POUR LES PRODUITS
     # ========================================================================
@@ -320,55 +311,6 @@ class Database:
         conn.commit()
         conn.close()
     
-    def get_category(self, category_id: str) -> Optional[Dict]:
-        """Récupère une catégorie."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM categories WHERE category_id = ?", (category_id,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
-    
-    def get_user_categories(self, user_id: str) -> List[Dict]:
-        """Récupère toutes les catégories d'un utilisateur."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM categories WHERE added_by = ?", (user_id,))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
-    
-    def update_category_products(self, category_id: str, products: List[Dict]):
-        """Met à jour les produits d'une catégorie."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        for product in products:
-            cursor.execute("""
-                INSERT OR REPLACE INTO category_products
-                (category_id, asin, title, current_price, original_price, discount_percent, last_seen)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                category_id,
-                product.get('asin'),
-                product.get('title'),
-                product.get('current_price'),
-                product.get('original_price'),
-                product.get('discount_percent'),
-                datetime.now()
-            ))
-        
-        # Mettre à jour les statistiques de la catégorie
-        discounted_count = sum(1 for p in products if (p.get('discount_percent') or 0) > 0)
-        cursor.execute("""
-            UPDATE categories 
-            SET product_count = ?, discounted_count = ?, last_check = ?
-            WHERE category_id = ?
-        """, (len(products), discounted_count, datetime.now(), category_id))
-        
-        conn.commit()
-        conn.close()
-    
     # ========================================================================
     # MÉTHODES POUR LES GROS RABAIS
     # ========================================================================
@@ -440,15 +382,6 @@ class Database:
         if limit:
             query += f" LIMIT {limit}"
         cursor.execute(query, (days,))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
-    
-    def get_all_price_errors(self) -> List[Dict]:
-        """Récupère toutes les erreurs de prix."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM price_errors ORDER BY confidence DESC")
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -554,19 +487,6 @@ class Database:
         conn.close()
         return comparison_id
     
-    def get_user_comparisons(self, user_id: str) -> List[Dict]:
-        """Récupère toutes les comparaisons d'un utilisateur."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM price_comparisons 
-            WHERE user_id = ?
-            ORDER BY created_at DESC
-        """, (user_id,))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
-    
     def get_all_comparisons(self) -> List[Dict]:
         """Récupère toutes les comparaisons actives."""
         conn = self.get_connection()
@@ -644,19 +564,6 @@ class Database:
               best_price, best_site, comparison_id))
         conn.commit()
         conn.close()
-    
-    def delete_price_comparison(self, comparison_id: int, user_id: str) -> bool:
-        """Supprime une comparaison."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            DELETE FROM price_comparisons 
-            WHERE id = ? AND user_id = ?
-        """, (comparison_id, user_id))
-        deleted = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return deleted
 
 
 # Instance globale de la base de données
