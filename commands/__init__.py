@@ -6,7 +6,6 @@ from telegram.ext import ContextTypes
 
 from utils.helpers import extract_asin, load_data
 from database import db
-from scrapers import AmazonScraper
 from config import CHECK_INTERVAL_MINUTES
 
 logger = logging.getLogger(__name__)
