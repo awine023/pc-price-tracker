@@ -117,6 +117,11 @@ class MemoryExpressScraper:
     
     def _search_with_curl_cffi(self, search_query: str, max_results: int = 3) -> List[Dict]:
         """Recherche avec curl-cffi (meilleur pour contourner Cloudflare) - méthode synchrone."""
+        # Vérifier que curl_requests est disponible
+        if curl_requests is None:
+            logger.error("❌ curl_requests est None - curl-cffi n'est pas correctement importé")
+            return []
+        
         # Memory Express utilise le format: /Search/Products?Search=query
         search_url = f"https://www.memoryexpress.com/Search/Products?Search={search_query.replace(' ', '+')}"
         
@@ -461,6 +466,7 @@ class MemoryExpressScraper:
         try:
             # Essayer d'abord avec curl-cffi (meilleur pour Cloudflare)
             if CURL_CFFI_AVAILABLE:
+                logger.info("🔄 Tentative avec curl-cffi pour contourner Cloudflare...")
                 try:
                     # curl-cffi est synchrone, donc on l'exécute dans un thread
                     import concurrent.futures
@@ -473,9 +479,16 @@ class MemoryExpressScraper:
                             max_results
                         )
                     if result:
+                        logger.info(f"✅ curl-cffi a réussi, {len(result)} produit(s) trouvé(s)")
                         return result
+                    else:
+                        logger.warning("⚠️ curl-cffi n'a retourné aucun résultat, fallback sur Playwright")
                 except Exception as e:
-                    logger.warning(f"curl-cffi échoué, fallback sur Playwright: {e}")
+                    logger.warning(f"❌ curl-cffi échoué, fallback sur Playwright: {e}")
+                    import traceback
+                    logger.debug(traceback.format_exc())
+            else:
+                logger.warning("⚠️ curl-cffi non disponible, utilisation directe de Playwright")
             
             # Fallback sur Playwright
             if not self.page or not self.browser:

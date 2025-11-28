@@ -644,7 +644,18 @@ class AmazonScraper:
             logger.info(f"Scraping category: {search_query}")
             
             # Naviguer vers la page de recherche avec referer
-            await self.page.goto(search_url, wait_until='networkidle', timeout=60000, referer='https://www.amazon.ca')
+            # Utiliser 'domcontentloaded' d'abord (plus rapide), puis fallback sur 'load' si nécessaire
+            try:
+                await self.page.goto(search_url, wait_until='domcontentloaded', timeout=45000, referer='https://www.amazon.ca')
+                logger.debug("Page chargée avec domcontentloaded")
+            except Exception as e:
+                logger.warning(f"Timeout avec domcontentloaded, tentative avec 'load': {e}")
+                try:
+                    await self.page.goto(search_url, wait_until='load', timeout=30000, referer='https://www.amazon.ca')
+                    logger.debug("Page chargée avec load")
+                except Exception as e2:
+                    logger.error(f"Impossible de charger la page Amazon: {e2}")
+                    return []
             
             # Vérifier si on a été bloqués
             await asyncio.sleep(random.uniform(3, 5))
@@ -653,7 +664,10 @@ class AmazonScraper:
                 logger.warning("⚠️ Amazon a détecté le bot, tentative de contournement...")
                 # Attendre plus longtemps et réessayer
                 await asyncio.sleep(random.uniform(5, 8))
-                await self.page.reload(wait_until='networkidle', timeout=60000)
+                try:
+                    await self.page.reload(wait_until='domcontentloaded', timeout=30000)
+                except:
+                    await self.page.reload(wait_until='load', timeout=20000)
                 await asyncio.sleep(random.uniform(3, 5))
             
             # Simuler un comportement humain
@@ -682,7 +696,10 @@ class AmazonScraper:
                     await asyncio.sleep(2)
                     await self.init_browser()
                     # Réessayer une fois
-                    await self.page.goto(search_url, wait_until='networkidle', timeout=60000, referer='https://www.amazon.ca')
+                    try:
+                        await self.page.goto(search_url, wait_until='domcontentloaded', timeout=30000, referer='https://www.amazon.ca')
+                    except:
+                        await self.page.goto(search_url, wait_until='load', timeout=20000, referer='https://www.amazon.ca')
                     await asyncio.sleep(random.uniform(5, 7))
                     page_title = await self.page.title()
                     if 'something went wrong' in page_title.lower():
