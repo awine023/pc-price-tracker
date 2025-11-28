@@ -21,6 +21,7 @@ try:
     CURL_CFFI_AVAILABLE = True
 except ImportError:
     CURL_CFFI_AVAILABLE = False
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Update
 from telegram.ext import (
@@ -47,6 +48,12 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+# Logger pour curl-cffi après la définition de logger
+if CURL_CFFI_AVAILABLE:
+    logger.info("✅ curl-cffi disponible - meilleur contournement Cloudflare activé")
+else:
+    logger.warning("⚠️ curl-cffi non disponible - installation: pip install curl-cffi")
 
 # User agents pour rotation
 USER_AGENTS = [
@@ -1484,102 +1491,270 @@ class MemoryExpressScraper:
     
     def _search_with_curl_cffi(self, search_query: str, max_results: int = 3) -> List[Dict]:
         """Recherche avec curl-cffi (meilleur pour contourner Cloudflare) - méthode synchrone."""
-        search_url = f"https://www.memoryexpress.com/Search/{search_query.replace(' ', '%20')}"
-        logger.info(f"🔍 Recherche Memory Express avec curl-cffi: {search_query}")
+        # Memory Express utilise le format: /Search/Products?Search=query
+        search_url = f"https://www.memoryexpress.com/Search/Products?Search={search_query.replace(' ', '+')}"
         
+        logger.info(f"🔍 Recherche Memory Express avec curl-cffi: {search_query}")
+        logger.info(f"🔗 URL: {search_url}")
+        
+        # Essayer différentes versions de Chrome et stratégies
+        impersonations = ["chrome120", "chrome119", "chrome110", "chrome107", "edge110", "safari15_5"]
+        response = None
+        
+        for impersonate in impersonations:
+            try:
+                logger.debug(f"Tentative avec {impersonate}...")
+                
+                # Créer une session pour maintenir les cookies
+                session = curl_requests.Session()
+                
+                # D'abord visiter la page d'accueil pour établir une session
+                try:
+                    session.get(
+                        "https://www.memoryexpress.com/",
+                        impersonate=impersonate,
+                        timeout=15,
+                        headers={
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                            'Accept-Language': 'en-CA,en-US;q=0.9,en;q=0.8,fr-CA;q=0.7,fr;q=0.6',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Connection': 'keep-alive',
+                            'Upgrade-Insecure-Requests': '1',
+                            'Sec-Fetch-Dest': 'document',
+                            'Sec-Fetch-Mode': 'navigate',
+                            'Sec-Fetch-Site': 'none',
+                            'Sec-Fetch-User': '?1',
+                            'Cache-Control': 'max-age=0',
+                            'DNT': '1',
+                        }
+                    )
+                    # Petite pause pour simuler un comportement humain
+                    import time
+                    time.sleep(random.uniform(1, 2))
+                except:
+                    pass
+                
+                # Maintenant faire la recherche avec la session établie
+                response = session.get(
+                    search_url,
+                    impersonate=impersonate,
+                    timeout=30,
+                    headers={
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-CA,en-US;q=0.9,en;q=0.8,fr-CA;q=0.7,fr;q=0.6',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'same-origin',
+                        'Sec-Fetch-User': '?1',
+                        'Referer': 'https://www.memoryexpress.com/',
+                        'Cache-Control': 'max-age=0',
+                        'DNT': '1',
+                    }
+                )
+                
+                if response.status_code == 200:
+                    # Vérifier si ce n'est pas une page 404
+                    if '404' not in response.text[:500] and 'Not Found' not in response.text[:500]:
+                        logger.info(f"✅ curl-cffi réussi avec {impersonate} (status 200)")
+                        break  # Sortir de la boucle impersonate
+                    else:
+                        logger.debug(f"⚠️ {impersonate} retourne 404, essai suivant...")
+                        continue
+                elif response.status_code == 403:
+                    logger.debug(f"❌ {impersonate} bloqué (403), essai suivant...")
+                    continue
+                else:
+                    logger.debug(f"Memory Express retourné {response.status_code} avec {impersonate}")
+                    if response.status_code < 500:  # Erreur client, pas serveur
+                        continue
+                    else:
+                        break  # Erreur serveur, on peut essayer de parser
+            except Exception as e:
+                logger.debug(f"Erreur avec {impersonate}: {e}")
+                continue
+        else:
+            # Toutes les tentatives ont échoué
+            logger.warning("❌ Toutes les tentatives curl-cffi ont échoué")
+            return []
+        
+        if not response or response.status_code != 200:
+            logger.warning(f"Memory Express retourné {response.status_code if response else 'None'} après toutes les tentatives")
+            return []
+        
+        # Vérifier si Cloudflare bloque
+        if 'Just a moment' in response.text or 'Verify you are human' in response.text:
+            logger.warning("⚠️ Cloudflare détecté même avec curl-cffi")
+            return []
+        
+        # Sauvegarder le HTML pour analyse
         try:
-            # curl-cffi simule un vrai navigateur Chrome
-            response = curl_requests.get(
-                search_url,
-                impersonate="chrome110",  # Simule Chrome 110
-                timeout=30,
-                headers={
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-CA,en;q=0.9,fr;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                }
-            )
+            import os
+            debug_dir = "debug_html"
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
             
-            if response.status_code != 200:
-                logger.warning(f"Memory Express retourné {response.status_code}")
-                return []
+            # Nettoyer le nom de fichier
+            safe_query = "".join(c for c in search_query if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            safe_query = safe_query.replace(' ', '_')
+            html_file = os.path.join(debug_dir, f"memoryexpress_{safe_query}.html")
             
-            # Vérifier si Cloudflare bloque
-            if 'Just a moment' in response.text or 'Verify you are human' in response.text:
-                logger.warning("⚠️ Cloudflare détecté même avec curl-cffi")
-                return []
+            with open(html_file, 'w', encoding='utf-8') as f:
+                f.write(response.text)
             
-            # Parser le HTML
-            soup = BeautifulSoup(response.text, 'lxml')
+            logger.info(f"💾 HTML sauvegardé dans: {html_file}")
+        except Exception as e:
+            logger.debug(f"Erreur sauvegarde HTML: {e}")
+        
+        # Parser le HTML
+        soup = BeautifulSoup(response.text, 'lxml')
+        
+        # Debug: vérifier le contenu de la page
+        page_title = soup.title.string if soup.title else "Pas de titre"
+        logger.info(f"📄 Titre de la page curl-cffi: {page_title}")
+        logger.info(f"📊 Taille du HTML: {len(response.text)} caractères")
+        
+        # Vérifier si c'est toujours Cloudflare
+        if 'Just a moment' in response.text or 'Verify you are human' in response.text:
+            logger.warning("⚠️ Cloudflare détecté dans le HTML curl-cffi")
+            return []
+        
+        # Vérifier si c'est une page de résultats valide
+        if 'no results' in response.text.lower() or 'aucun résultat' in response.text.lower():
+            logger.info("ℹ️ Page de résultats vide (aucun produit trouvé)")
+            return []
+        
+        # Chercher les produits avec plusieurs stratégies
+        products_list = []
+        product_elems = []
+        
+        # Sélecteurs pour Memory Express - structure réelle trouvée dans le HTML
+        selectors = [
+            'div.c-shca-icon-item',  # Structure principale des produits
+            'div[class*="c-shca-icon-item"]',
+            'div.c-product-tile',
+            'div[class*="product-tile"]',
+            'div[class*="ProductTile"]',
+            'div.product-tile',
+            'div.product-item',
+            'div[class*="product"]',
+            'article.product',
+            'article[class*="product"]',
+            '.product-card',
+            '.search-result-item',
+            'div[data-product]',
+            'li[class*="product"]',
+            'div[class*="Product"]',
+            'div[class*="item"]',
+            'div[class*="result"]'
+        ]
+        
+        for selector in selectors:
+            product_elems = soup.select(selector)
+            if product_elems:
+                logger.info(f"✅ Trouvé {len(product_elems)} produits avec {selector}")
+                break
+        
+        # Si aucun produit trouvé, essayer de chercher dans tout le HTML
+        if not product_elems:
+            # Chercher tous les liens qui pourraient être des produits
+            all_links = soup.select('a[href*="/Products/"], a[href*="/Product/"]')
+            if all_links:
+                logger.debug(f"Trouvé {len(all_links)} liens produits potentiels")
+                # Créer des éléments factices pour chaque lien
+                for link in all_links[:max_results]:
+                    parent = link.find_parent(['div', 'article', 'li'])
+                    if parent:
+                        product_elems.append(parent)
+                    else:
+                        # Créer un élément factice avec le lien
+                        fake_elem = soup.new_tag('div')
+                        fake_elem.append(link)
+                        product_elems.append(fake_elem)
+        
+        if not product_elems:
+            # Dernière tentative: chercher par texte
+            logger.warning("Aucun produit trouvé avec curl-cffi - sélecteurs CSS")
+            logger.info(f"🔍 Extrait du HTML (premiers 1000 caractères): {response.text[:1000]}")
             
-            # Chercher les produits
-            products_list = []
-            product_elems = []
+            # Essayer de trouver des prix dans le HTML brut
+            price_pattern = re.compile(r'\$[\d,]+\.?\d*')
+            prices_found = price_pattern.findall(response.text[:5000])
+            if prices_found:
+                logger.info(f"💰 {len(prices_found)} prix trouvés dans le HTML: {prices_found[:5]}")
             
-            selectors = [
-                'div.c-product-tile',
-                'div.product-tile',
-                'div.product-item',
-                'div[class*="product"]',
-                'article.product',
-                '.product-card',
-                '.search-result-item'
+            # Chercher des liens produits
+            product_links = soup.select('a[href*="/Products/"], a[href*="/Product/"]')
+            if product_links:
+                logger.info(f"🔗 {len(product_links)} liens produits trouvés")
+            
+            return []
+        
+        for product_elem in product_elems[:max_results]:
+            # Extraire le titre - Memory Express utilise c-shca-icon-item__body-name
+            title = None
+            title_selectors = [
+                '.c-shca-icon-item__body-name a',  # Structure réelle Memory Express
+                '.c-shca-icon-item__body-name',
+                'a[href*="/Products/"]',
+                'a[title]', 
+                'h2', 'h3', 
+                '.product-name', '.product-title', 
+                '[class*="title"]', 
+                'a'
+            ]
+            for selector in title_selectors:
+                title_elem = product_elem.select_one(selector)
+                if title_elem:
+                    # Pour les liens, prendre le texte du lien
+                    if title_elem.name == 'a':
+                        title = title_elem.get_text(strip=True)
+                    else:
+                        title = title_elem.get('title') or title_elem.get_text(strip=True)
+                    # Nettoyer le titre (enlever les images, etc.)
+                    if title:
+                        # Enlever les références de marque comme "AMD" si c'est juste une image
+                        title = re.sub(r'^\s*[A-Z]+\s+', '', title).strip()
+                        if len(title) > 10:  # Titre valide doit être assez long
+                            break
+            
+            if not title or len(title) < 10:
+                title = "Produit Memory Express"
+            
+            # Extraire le prix - Memory Express utilise c-shca-icon-item__summary-prices
+            price = None
+            price_selectors = [
+                '.c-shca-icon-item__summary-list span',  # Prix de vente (priorité)
+                '.c-shca-icon-item__summary-regular span',  # Prix régulier
+                '.c-shca-icon-item__summary-prices',
+                '.price', '.product-price', '.price-current',
+                '.price-regular', 'strong.price', 'span.price', 
+                '[class*="price"]', '.c-price', '.price-box'
             ]
             
-            for selector in selectors:
-                product_elems = soup.select(selector)
-                if product_elems:
-                    logger.debug(f"Trouvé {len(product_elems)} produits avec {selector}")
-                    break
+            for selector in price_selectors:
+                price_elem = product_elem.select_one(selector)
+                if price_elem:
+                    price_text = price_elem.get_text(strip=True)
+                    # Chercher le prix dans le texte
+                    price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_text)
+                    if price_match:
+                        try:
+                            test_price = float(price_match.group(1).replace(',', ''))
+                            if 1 < test_price < 100000:
+                                price = test_price
+                                break
+                        except ValueError:
+                            continue
             
-            if not product_elems:
-                logger.warning("Aucun produit trouvé avec curl-cffi")
-                return []
-            
-            for product_elem in product_elems[:max_results]:
-                # Extraire le titre
-                title = None
-                title_selectors = ['a[title]', 'h2', 'h3', '.product-name', '.product-title', '[class*="title"]', 'a']
-                for selector in title_selectors:
-                    title_elem = product_elem.select_one(selector)
-                    if title_elem:
-                        title = title_elem.get('title') or title_elem.get_text(strip=True)
-                        if title:
-                            break
-                
-                if not title:
-                    title = "Produit Memory Express"
-                
-                # Extraire le prix
-                price = None
-                price_selectors = [
-                    '.price', '.product-price', '.price-current',
-                    '.price-regular', 'strong.price', 'span.price', 
-                    '[class*="price"]', '.c-price', '.price-box'
-                ]
-                
-                for selector in price_selectors:
-                    price_elem = product_elem.select_one(selector)
-                    if price_elem:
-                        price_text = price_elem.get_text(strip=True)
-                        price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_text)
-                        if price_match:
-                            try:
-                                test_price = float(price_match.group(1).replace(',', ''))
-                                if 1 < test_price < 100000:
-                                    price = test_price
-                                    break
-                            except ValueError:
-                                continue
-                
-                if not price:
-                    all_text = product_elem.get_text()
-                    price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
+            # Si pas de prix trouvé, chercher dans tout le conteneur de prix
+            if not price:
+                price_container = product_elem.select_one('.c-shca-icon-item__summary-prices')
+                if price_container:
+                    price_text = price_container.get_text()
+                    price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', price_text)
                     for match in price_matches:
                         try:
                             test_price = float(match.replace(',', ''))
@@ -1588,62 +1763,74 @@ class MemoryExpressScraper:
                                 break
                         except ValueError:
                             continue
-                
-                if not price or price <= 0:
-                    continue
-                
-                # Extraire l'URL
-                url = None
-                url_selectors = [
-                    'a[href*="/Products/"]',
-                    'a[href*="/Product/"]',
-                    'a.product-link',
-                    'h2 a', 'h3 a',
-                    'a[title]',
-                    'a[href]'
-                ]
-                
-                for selector in url_selectors:
-                    url_elems = product_elem.select(selector)
-                    for url_elem in url_elems:
-                        href = url_elem.get('href')
-                        if href and not href.startswith('javascript:'):
-                            if ('/Products/' in href or '/Product/' in href) and \
-                               'Search' not in href and 'search' not in href:
-                                url = href
-                                break
-                    if url:
-                        break
-                
-                if not url:
-                    all_links = product_elem.select('a[href]')
-                    for link in all_links:
-                        href = link.get('href')
-                        if href and not href.startswith('javascript:') and \
+            
+            # Dernière tentative : chercher dans tout le texte du produit
+            if not price:
+                all_text = product_elem.get_text()
+                price_matches = re.findall(r'\$?\s*([\d,]+\.?\d*)', all_text)
+                for match in price_matches:
+                    try:
+                        test_price = float(match.replace(',', ''))
+                        if 1 < test_price < 100000:
+                            price = test_price
+                            break
+                    except ValueError:
+                        continue
+            
+            if not price or price <= 0:
+                logger.debug(f"⚠️ Produit sans prix valide: {title[:50]}")
+                continue
+            
+            # Extraire l'URL - Memory Express utilise des liens /Products/MX...
+            url = None
+            url_selectors = [
+                '.c-shca-icon-item__body-name a[href*="/Products/"]',  # Structure réelle
+                'a[href*="/Products/"]',
+                'a[href*="/Product/"]',
+                'a.product-link',
+                'h2 a', 'h3 a',
+                'a[title]',
+                'a[href]'
+            ]
+            
+            for selector in url_selectors:
+                url_elems = product_elem.select(selector)
+                for url_elem in url_elems:
+                    href = url_elem.get('href')
+                    if href and not href.startswith('javascript:') and '/Products/' in href:
+                        if ('/Products/' in href or '/Product/' in href) and \
                            'Search' not in href and 'search' not in href:
                             url = href
                             break
-                
                 if url:
-                    if not url.startswith('http'):
-                        url = f"https://www.memoryexpress.com{url}"
-                else:
-                    url = search_url
-                
-                products_list.append({
-                    "title": title,
-                    "price": price,
-                    "url": url
-                })
-                logger.info(f"✅ Produit Memory Express (curl-cffi): {title} - ${price:.2f}")
+                    break
             
-            if products_list:
-                logger.info(f"✅ {len(products_list)} produit(s) Memory Express trouvé(s) avec curl-cffi")
+            if not url:
+                all_links = product_elem.select('a[href]')
+                for link in all_links:
+                    href = link.get('href')
+                    if href and not href.startswith('javascript:') and \
+                       'Search' not in href and 'search' not in href:
+                        url = href
+                        break
             
-            return products_list
-        except Exception as e:
-            logger.error(f"Erreur avec curl-cffi: {e}")
-            return []
+            if url:
+                if not url.startswith('http'):
+                    url = f"https://www.memoryexpress.com{url}"
+            else:
+                url = search_url
+            
+            products_list.append({
+                "title": title,
+                "price": price,
+                "url": url
+            })
+            logger.info(f"✅ Produit Memory Express (curl-cffi): {title} - ${price:.2f}")
+        
+        if products_list:
+            logger.info(f"✅ {len(products_list)} produit(s) Memory Express trouvé(s) avec curl-cffi")
+        
+        return products_list
     
     async def search_products(self, search_query: str, max_results: int = 3) -> List[Dict]:
         """Recherche des produits sur Memory Express et retourne plusieurs résultats."""
@@ -1670,8 +1857,8 @@ class MemoryExpressScraper:
             if not self.page or not self.browser:
                 await self.init_browser()
             
-            # Memory Express utilise une URL de recherche différente
-            search_url = f"https://www.memoryexpress.com/Search/{search_query.replace(' ', '%20')}"
+            # Memory Express utilise des paramètres de requête pour la recherche
+            search_url = f"https://www.memoryexpress.com/Search/Products?Search={search_query.replace(' ', '+')}"
             logger.info(f"🔍 Recherche Memory Express: {search_query}")
             logger.info(f"🔗 URL: {search_url}")
             
@@ -2505,32 +2692,36 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception as e:
             logger.error(f"Erreur recherche Amazon: {e}")
         
-        # Newegg - retourne une liste de produits
-        newegg_results = []
+        # Newegg - retourne une liste de produits, prendre seulement le premier (produit principal)
+        newegg_result = None
         try:
             newegg_results = await newegg_scraper.search_products(search_query, max_results=3)
+            if newegg_results:
+                # Prendre le premier produit (le plus pertinent)
+                newegg_result = newegg_results[0]
         except Exception as e:
             logger.error(f"Erreur recherche Newegg: {e}")
         
-        # Memory Express - retourne une liste de produits
-        memoryexpress_results = []
+        # Memory Express - retourne une liste de produits, prendre seulement le premier (produit principal)
+        memoryexpress_result = None
         try:
             memoryexpress_results = await memoryexpress_scraper.search_products(search_query, max_results=3)
+            if memoryexpress_results:
+                # Prendre le premier produit (le plus pertinent)
+                memoryexpress_result = memoryexpress_results[0]
         except Exception as e:
             logger.error(f"Erreur recherche Memory Express: {e}")
         
-        # Collecter tous les prix pour trouver le meilleur
+        # Collecter tous les prix pour trouver le meilleur (un seul par site)
         all_prices = []
         if amazon_result and amazon_result.get("price"):
             all_prices.append(("Amazon.ca", amazon_result["price"], amazon_result.get("url", ""), amazon_result.get("title", product_name)))
         
-        for newegg_product in newegg_results:
-            if newegg_product.get("price"):
-                all_prices.append(("Newegg.ca", newegg_product["price"], newegg_product.get("url", ""), newegg_product.get("title", product_name)))
+        if newegg_result and newegg_result.get("price"):
+            all_prices.append(("Newegg.ca", newegg_result["price"], newegg_result.get("url", ""), newegg_result.get("title", product_name)))
         
-        for me_product in memoryexpress_results:
-            if me_product.get("price"):
-                all_prices.append(("Memory Express", me_product["price"], me_product.get("url", ""), me_product.get("title", product_name)))
+        if memoryexpress_result and memoryexpress_result.get("price"):
+            all_prices.append(("Memory Express", memoryexpress_result["price"], memoryexpress_result.get("url", ""), memoryexpress_result.get("title", product_name)))
         
         if not all_prices:
             await update.message.reply_text(
@@ -2546,56 +2737,54 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         all_prices.sort(key=lambda x: x[1])
         best_site, best_price, best_url, best_title = all_prices[0]
         
-        # Sauvegarder dans la base de données (garder le meilleur de chaque site)
+        # Sauvegarder dans la base de données (garder le produit principal de chaque site)
         db.add_user(user_id, username)
         comparison_id = db.add_price_comparison(user_id, product_name, search_query)
         
-        # Trouver le meilleur prix de chaque site pour la DB
-        amazon_best = amazon_result if amazon_result and amazon_result.get("price") else None
-        newegg_best = min(newegg_results, key=lambda x: x.get("price", float('inf'))) if newegg_results else None
-        memoryexpress_best = min(memoryexpress_results, key=lambda x: x.get("price", float('inf'))) if memoryexpress_results else None
-        
+        # Utiliser les résultats principaux (premier produit de chaque site)
         db.update_price_comparison(
             comparison_id,
-            amazon_price=amazon_best.get("price") if amazon_best else None,
-            amazon_url=amazon_best.get("url") if amazon_best else None,
+            amazon_price=amazon_result.get("price") if amazon_result else None,
+            amazon_url=amazon_result.get("url") if amazon_result else None,
             canadacomputers_price=None,
             canadacomputers_url=None,
-            newegg_price=newegg_best.get("price") if newegg_best else None,
-            newegg_url=newegg_best.get("url") if newegg_best else None,
-            memoryexpress_price=memoryexpress_best.get("price") if memoryexpress_best else None,
-            memoryexpress_url=memoryexpress_best.get("url") if memoryexpress_best else None
+            newegg_price=newegg_result.get("price") if newegg_result else None,
+            newegg_url=newegg_result.get("url") if newegg_result else None,
+            memoryexpress_price=memoryexpress_result.get("price") if memoryexpress_result else None,
+            memoryexpress_url=memoryexpress_result.get("url") if memoryexpress_result else None
         )
         
-        # Construire le message de comparaison avec tous les produits
+        # Construire le message de comparaison avec le produit principal de chaque site
         message = f"📊 **Comparaison de prix pour : {product_name}**\n\n"
         message += f"🏆 **Meilleur prix : {best_site} - ${best_price:.2f} CAD**\n"
         message += f"🔗 {best_url}\n\n"
         
-        # Afficher Amazon
+        # Afficher Amazon (produit principal)
         if amazon_result and amazon_result.get("price"):
             message += f"**🛒 Amazon.ca**\n"
             message += f"💰 ${amazon_result['price']:.2f} CAD\n"
             message += f"📦 {amazon_result.get('title', product_name)}\n"
             message += f"🔗 {amazon_result.get('url', '')}\n\n"
+        else:
+            message += f"**🛒 Amazon.ca**\n"
+            message += f"❌ Aucun produit trouvé\n\n"
         
-        # Afficher tous les produits Newegg
-        if newegg_results:
-            message += f"**🛒 Newegg.ca** ({len(newegg_results)} produit{'s' if len(newegg_results) > 1 else ''})\n"
-            for i, newegg_product in enumerate(newegg_results, 1):
-                message += f"{i}. 💰 ${newegg_product['price']:.2f} CAD\n"
-                message += f"   📦 {newegg_product.get('title', product_name)}\n"
-                message += f"   🔗 {newegg_product.get('url', '')}\n"
-            message += "\n"
+        # Afficher Newegg (produit principal uniquement)
+        if newegg_result and newegg_result.get("price"):
+            message += f"**🛒 Newegg.ca**\n"
+            message += f"💰 ${newegg_result['price']:.2f} CAD\n"
+            message += f"📦 {newegg_result.get('title', product_name)}\n"
+            message += f"🔗 {newegg_result.get('url', '')}\n\n"
+        else:
+            message += f"**🛒 Newegg.ca**\n"
+            message += f"❌ Aucun produit trouvé\n\n"
         
-        # Afficher tous les produits Memory Express
-        if memoryexpress_results and len(memoryexpress_results) > 0:
-            message += f"**🛒 Memory Express** ({len(memoryexpress_results)} produit{'s' if len(memoryexpress_results) > 1 else ''})\n"
-            for i, me_product in enumerate(memoryexpress_results, 1):
-                message += f"{i}. 💰 ${me_product['price']:.2f} CAD\n"
-                message += f"   📦 {me_product.get('title', product_name)}\n"
-                message += f"   🔗 {me_product.get('url', '')}\n"
-            message += "\n"
+        # Afficher Memory Express (produit principal uniquement)
+        if memoryexpress_result and memoryexpress_result.get("price"):
+            message += f"**🛒 Memory Express**\n"
+            message += f"💰 ${memoryexpress_result['price']:.2f} CAD\n"
+            message += f"📦 {memoryexpress_result.get('title', product_name)}\n"
+            message += f"🔗 {memoryexpress_result.get('url', '')}\n\n"
         else:
             message += f"**🛒 Memory Express**\n"
             message += f"❌ Aucun produit trouvé ou erreur de connexion\n\n"
@@ -4013,61 +4202,70 @@ def main() -> None:
         except Exception as e:
             logger.debug(f"Erreur arrêt scheduler: {e}")
         
-        # Fermer les navigateurs de manière asynchrone
-        async def close_all_browsers():
-            """Ferme tous les navigateurs de manière asynchrone."""
-            tasks = []
-            try:
-                if amazon_scraper.browser:
-                    tasks.append(amazon_scraper.close_browser())
-            except:
-                pass
-            try:
-                if newegg_scraper.browser:
-                    tasks.append(newegg_scraper.close_browser())
-            except:
-                pass
-            try:
-                if memoryexpress_scraper.browser:
-                    tasks.append(memoryexpress_scraper.close_browser())
-            except:
-                pass
-            
-            if tasks:
-                try:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                except:
-                    pass
-        
-        # Exécuter le nettoyage avec timeout
+        # Fermer les navigateurs de manière synchrone (plus sûr)
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Créer une nouvelle boucle pour le nettoyage
             try:
-                # Timeout de 5 secondes pour éviter de bloquer
-                loop.run_until_complete(asyncio.wait_for(close_all_browsers(), timeout=5.0))
-                logger.info("✅ Navigateurs fermés")
-            except asyncio.TimeoutError:
-                logger.warning("⏱️ Timeout lors de la fermeture des navigateurs")
-            except Exception as e:
-                logger.debug(f"Erreur fermeture navigateurs: {e}")
-            finally:
-                # Fermer proprement la boucle
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # Fermer les navigateurs avec timeout
+                async def close_browsers_async():
+                    """Ferme tous les navigateurs."""
+                    tasks = []
+                    try:
+                        if hasattr(amazon_scraper, 'browser') and amazon_scraper.browser:
+                            tasks.append(amazon_scraper.close_browser())
+                    except:
+                        pass
+                    try:
+                        if hasattr(newegg_scraper, 'browser') and newegg_scraper.browser:
+                            tasks.append(newegg_scraper.close_browser())
+                    except:
+                        pass
+                    try:
+                        if hasattr(memoryexpress_scraper, 'browser') and memoryexpress_scraper.browser:
+                            tasks.append(memoryexpress_scraper.close_browser())
+                    except:
+                        pass
+                    
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Exécuter avec timeout
+                try:
+                    loop.run_until_complete(asyncio.wait_for(close_browsers_async(), timeout=3.0))
+                    logger.info("✅ Navigateurs fermés")
+                except asyncio.TimeoutError:
+                    logger.warning("⏱️ Timeout lors de la fermeture des navigateurs (non critique)")
+                except Exception as e:
+                    logger.debug(f"Erreur fermeture navigateurs: {e}")
+                
+                # Nettoyer la boucle proprement
                 try:
                     # Annuler toutes les tâches en attente
-                    pending = asyncio.all_tasks(loop)
-                    for task in pending:
-                        task.cancel()
+                    pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
                     if pending:
+                        for task in pending:
+                            task.cancel()
                         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                 except:
                     pass
+                
+            finally:
+                # Fermer la boucle de manière sécurisée
                 try:
-                    loop.close()
-                except:
-                    pass
+                    if loop and not loop.is_closed():
+                        # Attendre que toutes les tâches soient terminées
+                        try:
+                            loop.run_until_complete(asyncio.sleep(0.1))
+                        except:
+                            pass
+                        loop.close()
+                except Exception as e:
+                    logger.debug(f"Erreur fermeture loop: {e}")
         except Exception as e:
-            logger.debug(f"Erreur nettoyage: {e}")
+            logger.debug(f"Erreur nettoyage navigateurs: {e}")
         
         logger.info("✅ Nettoyage terminé")
     
