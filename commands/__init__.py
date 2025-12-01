@@ -17,6 +17,7 @@ memoryexpress_scraper = None
 canadacomputers_scraper = None
 bestbuy_scraper = None
 price_analyzer = None
+stock_analyzer = None
 global_application = None
 
 def set_scrapers(amazon, newegg, memoryexpress, canadacomputers, bestbuy, analyzer):
@@ -33,6 +34,11 @@ def set_application(app):
     """Configure l'application Telegram depuis bot.py."""
     global global_application
     global_application = app
+
+def set_stock_analyzer(analyzer):
+    """Configure le stock analyzer depuis bot.py."""
+    global stock_analyzer
+    stock_analyzer = analyzer
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Commande /start - Message d'accueil."""
@@ -1297,7 +1303,238 @@ Le bot surveille tous les produits en rabais dans la catégorie et vous alerte p
 Le bot vérifie automatiquement les prix toutes les {CHECK_INTERVAL_MINUTES} minutes.
 
 **Note:** Ce bot utilise Playwright (gratuit) pour scraper Amazon.ca directement.
+
+**Analyse d'actions (Nouveau !) :**
+📊 /analyze [TICKER] - Analyse complète d'une action avec IA (Groq)
+   Exemple: /analyze AAPL ou /analyze TSLA
 """
     await update.message.reply_text(help_text, parse_mode="Markdown")
+
+
+async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Commande /analyze - Analyse complète d'une action avec IA (Groq)."""
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Veuillez fournir un symbole d'action (ticker).\n\n"
+            "**Exemples :**\n"
+            "/analyze AAPL - Analyser Apple\n"
+            "/analyze TSLA - Analyser Tesla\n"
+            "/analyze MSFT - Analyser Microsoft\n"
+            "/analyze GOOGL - Analyser Google"
+        )
+        return
+    
+    ticker = context.args[0].upper().strip()
+    
+    if not stock_analyzer:
+        await update.message.reply_text(
+            "❌ Analyseur d'actions non configuré. "
+            "Veuillez contacter l'administrateur."
+        )
+        return
+    
+    # Message de démarrage
+    status_msg = await update.message.reply_text(
+        f"⏳ Analyse en cours pour **{ticker}**...\n\n"
+        "📊 Récupération des données techniques...\n"
+        "📰 Collecte des nouvelles...\n"
+        "📈 Analyse du graphique...\n"
+        "🤖 Analyse avec IA (Groq)...",
+        parse_mode="Markdown"
+    )
+    
+    try:
+        # Lancer l'analyse complète
+        analysis = await stock_analyzer.analyze_stock(ticker)
+        
+        if not analysis:
+            await status_msg.edit_text(
+                f"❌ Impossible d'analyser **{ticker}**.\n\n"
+                "Vérifiez que le symbole est correct et réessayez.",
+                parse_mode="Markdown"
+            )
+            return
+        
+        # Formater la réponse
+        response = format_stock_analysis(analysis)
+        
+        # Envoyer la réponse (diviser en plusieurs messages si trop long)
+        if len(response) > 4096:  # Limite Telegram
+            # Envoyer en plusieurs parties
+            parts = split_long_message(response, 4000)
+            for i, part in enumerate(parts):
+                if i == 0:
+                    await status_msg.edit_text(part, parse_mode="Markdown")
+                else:
+                    await update.message.reply_text(part, parse_mode="Markdown")
+        else:
+            await status_msg.edit_text(response, parse_mode="Markdown")
+            
+    except Exception as e:
+        logger.error(f"Erreur lors de l'analyse de {ticker}: {e}", exc_info=True)
+        await status_msg.edit_text(
+            f"❌ Erreur lors de l'analyse de **{ticker}**: {str(e)}",
+            parse_mode="Markdown"
+        )
+
+
+def format_stock_analysis(analysis: dict) -> str:
+    """Formate l'analyse d'action pour Telegram."""
+    ticker = analysis.get("ticker", "N/A")
+    stock_data = analysis.get("stock_data", {})
+    chart_analysis = analysis.get("chart_analysis", {})
+    ai_analysis = analysis.get("ai_analysis", {})
+    news = analysis.get("news", [])
+    summary = analysis.get("summary", {})
+    
+    # En-tête
+    response = f"📊 **Analyse de {ticker}**\n\n"
+    response += "=" * 30 + "\n\n"
+    
+    # Données techniques
+    response += "📈 **Données Techniques**\n"
+    if stock_data.get("price"):
+        response += f"💰 Prix: ${stock_data['price']:.2f}\n"
+    if stock_data.get("change"):
+        change = stock_data["change"]
+        emoji = "📈" if "+" in str(change) or (isinstance(change, (int, float)) and change > 0) else "📉"
+        response += f"{emoji} Variation: {change}\n"
+    if stock_data.get("pe_ratio"):
+        response += f"📊 P/E Ratio: {stock_data['pe_ratio']}\n"
+    if stock_data.get("volume"):
+        vol = stock_data["volume"]
+        if isinstance(vol, int):
+            vol_str = f"{vol:,}" if vol < 1_000_000 else f"{vol/1_000_000:.2f}M"
+            response += f"📊 Volume: {vol_str}\n"
+        else:
+            response += f"📊 Volume: {vol}\n"
+    if stock_data.get("market_cap"):
+        response += f"💼 Market Cap: {stock_data['market_cap']}\n"
+    if stock_data.get("rsi"):
+        response += f"📊 RSI: {stock_data['rsi']:.2f}\n"
+    if stock_data.get("beta"):
+        response += f"📊 Beta: {stock_data['beta']:.2f}\n"
+    
+    response += "\n"
+    
+    # Analyse graphique
+    if chart_analysis:
+        response += "📈 **Analyse Graphique**\n"
+        if chart_analysis.get("current_price"):
+            response += f"💰 Prix actuel: ${chart_analysis['current_price']:.2f}\n"
+        if chart_analysis.get("price_change_percent"):
+            pct = chart_analysis["price_change_percent"]
+            emoji = "📈" if pct > 0 else "📉"
+            response += f"{emoji} Variation: {pct:+.2f}%\n"
+        if chart_analysis.get("trend"):
+            trend = chart_analysis["trend"]
+            emoji = "🟢" if trend == "Haussière" else "🔴" if trend == "Baissière" else "🟡"
+            response += f"{emoji} Tendance: {trend}\n"
+        if chart_analysis.get("support_level"):
+            response += f"📉 Support: ${chart_analysis['support_level']:.2f}\n"
+        if chart_analysis.get("resistance_level"):
+            response += f"📈 Résistance: ${chart_analysis['resistance_level']:.2f}\n"
+        if chart_analysis.get("rsi"):
+            rsi = chart_analysis["rsi"]
+            if rsi > 70:
+                status = "Survente ⚠️"
+            elif rsi < 30:
+                status = "Survente 💡"
+            else:
+                status = "Normal"
+            response += f"📊 RSI: {rsi:.2f} ({status})\n"
+        
+        response += "\n"
+    
+    # Recommandation IA
+    ai_error = analysis.get("ai_error")
+    ai_analysis = analysis.get("ai_analysis")
+    
+    if ai_error:
+        response += "🤖 **Analyse IA**\n"
+        response += "⚠️ **IA non disponible**\n"
+        response += f"❌ {ai_error[:100]}\n\n"
+    elif ai_analysis:
+        response += "🤖 **Analyse IA (Groq)**\n"
+        recommendation = ai_analysis.get("recommendation", "HOLD")
+        confidence = ai_analysis.get("confidence", 5)
+        
+        # Emoji selon recommandation
+        if recommendation == "ACHETER":
+            emoji = "🟢"
+        elif recommendation == "VENDRE":
+            emoji = "🔴"
+        else:
+            emoji = "🟡"
+        
+        response += f"{emoji} **Recommandation: {recommendation}**\n"
+        response += f"🎯 Confiance: {confidence}/10\n\n"
+        
+        # Raisonnement
+        reasoning = ai_analysis.get("reasoning", "")
+        if reasoning:
+            # Prendre les premières lignes du raisonnement
+            reasoning_lines = reasoning.split("\n")[:5]
+            response += "💡 **Raisonnement:**\n"
+            for line in reasoning_lines:
+                if line.strip():
+                    response += f"• {line.strip()}\n"
+            response += "\n"
+    
+    # Nouvelles récentes
+    if news:
+        response += "📰 **Nouvelles Récentes**\n"
+        for i, article in enumerate(news[:3], 1):
+            title = article.get("title", "Sans titre")
+            date = article.get("date", "")
+            # Limiter la longueur du titre
+            if len(title) > 60:
+                title = title[:57] + "..."
+            response += f"{i}. {title}\n"
+            if date:
+                response += f"   📅 {date}\n"
+        response += "\n"
+    
+    # Résumé
+    if summary:
+        response += "📋 **Résumé**\n"
+        if summary.get("current_price"):
+            response += f"💰 Prix: ${summary['current_price']:.2f}\n"
+        if summary.get("key_points"):
+            response += "\n**Points clés:**\n"
+            for point in summary["key_points"][:3]:
+                if point:
+                    response += f"• {point}\n"
+    
+    response += "\n" + "=" * 30 + "\n"
+    if ai_analysis and not ai_error:
+        response += "💡 *Analyse générée avec Groq (Llama 3.1)*"
+    else:
+        response += "💡 *Analyse générée (sans IA)*"
+    
+    return response
+
+
+def split_long_message(text: str, max_length: int = 4000) -> list:
+    """Divise un message long en plusieurs parties."""
+    parts = []
+    current_part = ""
+    
+    for line in text.split("\n"):
+        if len(current_part) + len(line) + 1 > max_length:
+            if current_part:
+                parts.append(current_part)
+                current_part = line + "\n"
+            else:
+                # Ligne trop longue, la couper
+                parts.append(line[:max_length])
+                current_part = line[max_length:] + "\n"
+        else:
+            current_part += line + "\n"
+    
+    if current_part:
+        parts.append(current_part)
+    
+    return parts
 
 

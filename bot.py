@@ -3,6 +3,7 @@ Telegram Bot pour surveiller les prix Amazon Canada avec Playwright (gratuit)
 """
 import asyncio
 import logging
+import os
 import signal
 import sys
 from typing import Optional
@@ -15,6 +16,7 @@ from config import (
     CHECK_INTERVAL_MINUTES,
     TELEGRAM_TOKEN,
     GLOBAL_SCAN_INTERVAL_MINUTES,
+    AI_PROVIDER,
 )
 from price_analyzer import PriceAnalyzer
 from database import db
@@ -35,8 +37,10 @@ from commands import (
     stats_command,
     history_command,
     help_command,
+    analyze_command,
     set_scrapers as set_command_scrapers,
     set_application as set_command_application,
+    set_stock_analyzer as set_command_stock_analyzer,
 )
 from schedulers import (
     scan_amazon_globally,
@@ -66,6 +70,11 @@ price_analyzer = PriceAnalyzer(
     min_price_for_error=100.0,
 )
 
+# Initialiser le stock analyzer (pour analyse d'actions)
+# Utilise Groq par défaut (gratuit et rapide)
+from analyzers import StockAnalyzer
+stock_analyzer = StockAnalyzer(ai_provider=AI_PROVIDER)
+
 # Variable globale pour l'application (utilisée dans scannow_command)
 global_application: Optional[Application] = None
 
@@ -84,6 +93,7 @@ def main() -> None:
     set_global_scrapers(amazon_scraper, price_analyzer)
     set_price_checker_scrapers(amazon_scraper, price_analyzer)
     set_comparison_scrapers(amazon_scraper, newegg_scraper, memoryexpress_scraper, canadacomputers_scraper, bestbuy_scraper)
+    set_command_stock_analyzer(stock_analyzer)
 
     # Créer l'application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -108,6 +118,7 @@ def main() -> None:
     application.add_handler(CommandHandler("scannow", scannow_command))
     application.add_handler(CommandHandler("settings", settings_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("analyze", analyze_command))
 
     # Démarrer le scheduler pour vérifier les prix périodiquement
     scheduler = BackgroundScheduler()
