@@ -334,12 +334,15 @@ Format ta réponse de manière claire et structurée."""
     def _parse_ai_response(self, response: str, ticker: str) -> Dict:
         """Parse la réponse de l'IA."""
         try:
+            import re
+            
             analysis = {
                 "ticker": ticker,
                 "raw_response": response,
                 "recommendation": "HOLD",
                 "confidence": 5,
                 "reasoning": "",
+                "situations": [],  # Les 3 meilleures situations
                 "positives": [],
                 "negatives": [],
                 "risks": []
@@ -353,12 +356,47 @@ Format ta réponse de manière claire et structurée."""
             else:
                 analysis["recommendation"] = "HOLD"
             
-            import re
+            # Extraire le score de confiance
             confidence_match = re.search(r'confiance[:\s]+(\d+)', response, re.I)
             if confidence_match:
                 analysis["confidence"] = int(confidence_match.group(1))
             
-            analysis["reasoning"] = response
+            # Extraire les 3 meilleures situations
+            # Chercher les sections "SITUATION 1", "SITUATION 2", "SITUATION 3"
+            situations_found = []
+            for i in range(1, 4):
+                situation_pattern = rf'SITUATION\s+{i}[^\n]*\n(.*?)(?=SITUATION\s+{i+1}|$)'
+                situation_match = re.search(situation_pattern, response, re.IGNORECASE | re.DOTALL)
+                
+                if situation_match:
+                    situation_text = situation_match.group(1)
+                    situation = self._parse_situation(situation_text, i)
+                    if situation:
+                        situations_found.append(situation)
+            
+            # Stocker les situations (sans doublons)
+            analysis["situations"] = situations_found
+            
+            # Retirer les situations du raisonnement pour éviter la duplication
+            reasoning_clean = response
+            if situations_found:
+                # Retirer la section des situations du raisonnement
+                reasoning_clean = re.sub(
+                    r'STRATÉGIE DE PRIX.*?SITUATION\s+3.*?(?=\d\.\s+\*\*POINTS|$)',
+                    '',
+                    reasoning_clean,
+                    flags=re.IGNORECASE | re.DOTALL
+                )
+                # Retirer aussi les sections individuelles
+                for i in range(1, 4):
+                    reasoning_clean = re.sub(
+                        rf'SITUATION\s+{i}.*?(?=SITUATION\s+{i+1}|\d\.\s+\*\*POINTS|$)',
+                        '',
+                        reasoning_clean,
+                        flags=re.IGNORECASE | re.DOTALL
+                    )
+            
+            analysis["reasoning"] = reasoning_clean.strip()
             
             return analysis
             
@@ -369,4 +407,67 @@ Format ta réponse de manière claire et structurée."""
                 "recommendation": "HOLD",
                 "raw_response": response
             }
+    
+    def _parse_situation(self, situation_text: str, num: int) -> Optional[Dict]:
+        """Parse une situation d'investissement."""
+        try:
+            import re
+            
+            situation = {
+                "numero": num,
+                "prix_entree": None,
+                "prix_sortie": None,
+                "stop_loss": None,
+                "score": None,
+                "raison": "",
+                "horizon": "",
+                "potentiel_gain": None,
+                "risque": ""
+            }
+            
+            # Extraire prix d'entrée
+            entree_match = re.search(r'prix\s+d[''"]?entrée[:\s]+\$?([\d.]+)', situation_text, re.I)
+            if entree_match:
+                situation["prix_entree"] = float(entree_match.group(1))
+            
+            # Extraire prix de sortie
+            sortie_match = re.search(r'prix\s+de\s+sortie[:\s]+\$?([\d.]+)', situation_text, re.I)
+            if sortie_match:
+                situation["prix_sortie"] = float(sortie_match.group(1))
+            
+            # Extraire stop loss
+            stop_match = re.search(r'stop\s+loss[:\s]+\$?([\d.]+)', situation_text, re.I)
+            if stop_match:
+                situation["stop_loss"] = float(stop_match.group(1))
+            
+            # Extraire score
+            score_match = re.search(r'score[:\s]+(\d+)/10', situation_text, re.I)
+            if score_match:
+                situation["score"] = int(score_match.group(1))
+            
+            # Extraire potentiel de gain
+            gain_match = re.search(r'potentiel\s+de\s+gain[:\s]+([\d.]+)%', situation_text, re.I)
+            if gain_match:
+                situation["potentiel_gain"] = float(gain_match.group(1))
+            
+            # Extraire risque
+            risque_match = re.search(r'risque[:\s]+(faible|modéré|élevé|faible|modere|eleve)', situation_text, re.I)
+            if risque_match:
+                situation["risque"] = risque_match.group(1).capitalize()
+            
+            # Extraire raison (texte après "Raison :")
+            raison_match = re.search(r'raison[:\s]+(.*?)(?=horizon|potentiel|risque|$)', situation_text, re.I | re.DOTALL)
+            if raison_match:
+                situation["raison"] = raison_match.group(1).strip()[:200]  # Limiter à 200 caractères
+            
+            # Extraire horizon
+            horizon_match = re.search(r'horizon[:\s]+(court|moyen|long)\s+terme', situation_text, re.I)
+            if horizon_match:
+                situation["horizon"] = horizon_match.group(1).capitalize() + " terme"
+            
+            return situation if situation["prix_entree"] or situation["prix_sortie"] else None
+            
+        except Exception as e:
+            logger.debug(f"Erreur parsing situation {num}: {e}")
+            return None
 

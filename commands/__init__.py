@@ -1470,14 +1470,61 @@ def format_stock_analysis(analysis: dict) -> str:
         response += f"{emoji} **Recommandation: {recommendation}**\n"
         response += f"🎯 Confiance: {confidence}/10\n\n"
         
-        # Raisonnement
+        # Les 3 meilleures situations (afficher une seule fois)
+        situations = ai_analysis.get("situations", [])
+        if situations:
+            # S'assurer qu'on n'a pas de doublons
+            seen_situations = []
+            unique_situations = []
+            for situation in situations:
+                # Créer une clé unique basée sur le prix d'entrée et le score
+                situation_key = (
+                    situation.get("prix_entree"),
+                    situation.get("score"),
+                    situation.get("numero")
+                )
+                if situation_key not in seen_situations:
+                    seen_situations.append(situation_key)
+                    unique_situations.append(situation)
+            
+            if unique_situations:
+                response += "💰 **LES 3 MEILLEURES SITUATIONS D'INVESTISSEMENT**\n\n"
+                for i, situation in enumerate(unique_situations[:3], 1):
+                    score = situation.get("score", "N/A")
+                    prix_entree = situation.get("prix_entree")
+                    prix_sortie = situation.get("prix_sortie")
+                    stop_loss = situation.get("stop_loss")
+                    potentiel = situation.get("potentiel_gain")
+                    risque = situation.get("risque", "N/A")
+                    horizon = situation.get("horizon", "N/A")
+                    raison = situation.get("raison", "")
+                    
+                    response += f"**🎯 SITUATION {i}** (Score: {score}/10)\n"
+                    if prix_entree:
+                        response += f"📥 Prix d'entrée: ${prix_entree:.2f}\n"
+                    if prix_sortie:
+                        response += f"📤 Prix de sortie: ${prix_sortie:.2f}\n"
+                    if stop_loss:
+                        response += f"🛑 Stop loss: ${stop_loss:.2f}\n"
+                    if potentiel:
+                        response += f"📈 Potentiel de gain: {potentiel:.1f}%\n"
+                    if risque:
+                        response += f"⚠️ Risque: {risque}\n"
+                    if horizon:
+                        response += f"⏰ Horizon: {horizon}\n"
+                    if raison:
+                        raison_short = raison[:100] + "..." if len(raison) > 100 else raison
+                        response += f"💡 {raison_short}\n"
+                    response += "\n"
+        
+        # Raisonnement (seulement si pas de situations pour éviter duplication)
         reasoning = ai_analysis.get("reasoning", "")
-        if reasoning:
+        if reasoning and not situations:
             # Prendre les premières lignes du raisonnement
             reasoning_lines = reasoning.split("\n")[:5]
             response += "💡 **Raisonnement:**\n"
             for line in reasoning_lines:
-                if line.strip():
+                if line.strip() and not line.strip().startswith("SITUATION"):
                     response += f"• {line.strip()}\n"
             response += "\n"
     
