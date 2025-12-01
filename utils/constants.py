@@ -42,7 +42,9 @@ KNOWN_BRANDS = {
     'noctua', 'be quiet', 'corsair', 'cooler master', 'arctic', 'thermalright', 'deepcool',
     # Boîtiers
     'corsair', 'fractal design', 'nzxt', 'cooler master', 'lian li', 'phanteks', 'be quiet', 'thermaltake',
+    # Moniteurs
+    'msi', 'asus', 'acer', 'dell', 'hp', 'lenovo', 'samsung', 'lg', 'benq', 'aoc', 'viewsonic', 'gigabyte',
     # Autres
-    'logitech', 'razer', 'steelseries', 'hyperx', 'benq', 'asus', 'acer', 'dell', 'hp', 'lenovo',
+    'logitech', 'razer', 'steelseries', 'hyperx', 'benq', 'asus', 'acer', 'dell', 'hp', 'lenovo', 'msi',
 }
 

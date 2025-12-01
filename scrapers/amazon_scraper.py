@@ -715,8 +715,16 @@ class AmazonScraper:
             
             products = []
             
+            # Vérifier si Amazon a bloqué ou si la page est vide
+            page_text = soup.get_text().lower()
+            if 'captcha' in page_text or 'robot' in page_text or 'something went wrong' in page_text:
+                logger.error("❌ Amazon a bloqué le scraping (CAPTCHA ou erreur détectée)")
+                logger.debug(f"Extrait de la page: {page_text[:500]}")
+                return []
+            
             # Méthode 1: Chercher avec data-component-type (méthode principale)
             product_containers = soup.find_all('div', {'data-component-type': 's-search-result'})
+            logger.debug(f"Méthode 1 (data-component-type): {len(product_containers)} produits trouvés")
             
             # Méthode 2: Si pas de résultats, chercher avec data-asin directement
             if not product_containers:
@@ -728,11 +736,42 @@ class AmazonScraper:
                         # Vérifier si c'est un conteneur de produit (contient un titre)
                         if div.find('h2') or div.find('span', {'class': re.compile(r'title|text', re.I)}):
                             product_containers.append(div)
+                logger.debug(f"Méthode 2 (data-asin): {len(product_containers)} produits trouvés")
             
             # Méthode 3: Chercher avec class s-result-item
             if not product_containers:
                 logger.debug("Méthode 2 échouée, essai méthode 3 (s-result-item)")
                 product_containers = soup.find_all('div', {'class': re.compile(r's-result-item', re.I)})
+                logger.debug(f"Méthode 3 (s-result-item): {len(product_containers)} produits trouvés")
+            
+            # Méthode 4: Chercher avec data-cel-widget
+            if not product_containers:
+                logger.debug("Méthode 3 échouée, essai méthode 4 (data-cel-widget)")
+                product_containers = soup.find_all('div', {'data-cel-widget': re.compile(r'search_result', re.I)})
+                logger.debug(f"Méthode 4 (data-cel-widget): {len(product_containers)} produits trouvés")
+            
+            # Méthode 5: Chercher tous les divs avec data-asin (dernière tentative)
+            if not product_containers:
+                logger.debug("Méthode 4 échouée, essai méthode 5 (tous les data-asin)")
+                all_asins = soup.find_all('div', {'data-asin': True})
+                product_containers = [div for div in all_asins if div.get('data-asin') and div.get('data-asin') != '']
+                logger.debug(f"Méthode 5 (tous data-asin): {len(product_containers)} produits trouvés")
+            
+            if not product_containers:
+                logger.warning("⚠️ Aucun produit trouvé avec aucune méthode - Amazon a peut-être changé sa structure")
+                logger.debug(f"Taille du HTML: {len(html)} caractères")
+                logger.debug(f"Titre de la page: {page_title}")
+                # Sauvegarder le HTML pour debug
+                try:
+                    import os
+                    os.makedirs('debug_html', exist_ok=True)
+                    safe_query = search_query.replace(' ', '_').replace('/', '_')[:50]
+                    debug_file = f"debug_html/amazon_no_products_{safe_query}.html"
+                    with open(debug_file, 'w', encoding='utf-8') as f:
+                        f.write(html)
+                    logger.info(f"💾 HTML sauvegardé pour debug: {debug_file}")
+                except:
+                    pass
             
             logger.info(f"Trouvé {len(product_containers)} conteneurs de produits")
             
@@ -932,15 +971,24 @@ class AmazonScraper:
                     # FILTRES: Ne garder que les produits qui répondent aux critères
                     # 1. Prix valide
                     # 2. Note >= 4.0 étoiles (ou pas de note)
-                    # 3. Marque connue
+                    # 3. Marque connue (mais moins strict pour les recherches spécifiques)
                     if current_price and 10 < current_price < 100000:
                         # Vérifier la note (doit être >= 4.0 ou None)
                         if rating is not None and rating < 4.0:
+                            logger.debug(f"Produit rejeté (note < 4.0): {title[:50]} - Note: {rating}")
                             continue  # Rejeter les produits avec moins de 4 étoiles
                         
-                        # Vérifier la marque
+                        # Vérifier la marque (mais être plus flexible)
                         if not is_known_brand:
-                            continue  # Rejeter les produits de marques inconnues
+                            # Si la recherche contient des mots spécifiques (modèle, numéro), être plus flexible
+                            search_lower = search_query.lower()
+                            # Si la recherche contient des numéros de modèle, accepter même sans marque connue
+                            has_model_number = bool(re.search(r'\d+', search_lower))
+                            if not has_model_number:
+                                logger.debug(f"Produit rejeté (marque inconnue): {title[:50]}")
+                                continue  # Rejeter les produits de marques inconnues
+                            else:
+                                logger.debug(f"Produit accepté malgré marque inconnue (recherche spécifique): {title[:50]}")
                         
                         products.append({
                             "asin": asin,

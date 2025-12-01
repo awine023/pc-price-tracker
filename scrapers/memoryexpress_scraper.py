@@ -257,6 +257,11 @@ class MemoryExpressScraper:
             logger.info("ℹ️ Page de résultats vide (aucun produit trouvé)")
             return []
         
+        # Vérifier si Cloudflare bloque toujours
+        if 'Just a moment' in response.text or 'Verify you are human' in response.text or 'cf-browser-verification' in response.text:
+            logger.warning("⚠️ Cloudflare bloque toujours - page de vérification détectée")
+            return []
+        
         # Chercher les produits avec plusieurs stratégies
         product_elems = []
         
@@ -278,7 +283,12 @@ class MemoryExpressScraper:
             'li[class*="product"]',
             'div[class*="Product"]',
             'div[class*="item"]',
-            'div[class*="result"]'
+            'div[class*="result"]',
+            # Nouveaux sélecteurs possibles
+            '[data-product-id]',
+            '[data-sku]',
+            '.product-wrapper',
+            '.product-container'
         ]
         
         for selector in selectors:
@@ -286,6 +296,8 @@ class MemoryExpressScraper:
             if product_elems:
                 logger.info(f"✅ Trouvé {len(product_elems)} produits avec {selector}")
                 break
+            else:
+                logger.debug(f"❌ Sélecteur {selector} n'a rien trouvé")
         
         # Si aucun produit trouvé, essayer de chercher dans tout le HTML
         if not product_elems:
@@ -306,8 +318,29 @@ class MemoryExpressScraper:
         
         if not product_elems:
             # Dernière tentative: chercher par texte
-            logger.warning("Aucun produit trouvé avec curl-cffi - sélecteurs CSS")
+            logger.warning("⚠️ Aucun produit trouvé avec curl-cffi - sélecteurs CSS")
             logger.info(f"🔍 Extrait du HTML (premiers 1000 caractères): {response.text[:1000]}")
+            logger.info(f"📊 Taille totale du HTML: {len(response.text)} caractères")
+            
+            # Vérifier s'il y a des liens produits dans le HTML
+            all_product_links = soup.select('a[href*="/Products/"], a[href*="/Product/"]')
+            logger.info(f"🔗 Trouvé {len(all_product_links)} liens produits dans le HTML")
+            
+            if all_product_links:
+                logger.warning("⚠️ Des liens produits existent mais les conteneurs ne sont pas trouvés - structure HTML peut avoir changé")
+            
+            # Sauvegarder le HTML pour debug
+            try:
+                import os
+                os.makedirs('debug_html', exist_ok=True)
+                safe_query = search_query.replace(' ', '_').replace('/', '_')[:50]
+                debug_file = f"debug_html/memoryexpress_no_products_{safe_query}.html"
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                logger.info(f"💾 HTML sauvegardé pour debug: {debug_file}")
+            except:
+                pass
+            
             return []
         
         # Extraire les mots-clés importants de la requête de recherche
@@ -464,16 +497,36 @@ class MemoryExpressScraper:
                     if title_lower.startswith(word):
                         score += 1
             
-            # Bonus si plusieurs mots-clés sont trouvés
+            # Bonus si plusieurs mots-clés sont trouvés (mais être plus flexible)
             matched_words = sum(1 for word in query_words if word in title_lower)
-            if matched_words >= len(query_words) * 0.6:  # Au moins 60% des mots-clés
-                score += 5
+            if len(query_words) > 0:
+                match_ratio = matched_words / len(query_words)
+                if match_ratio >= 0.4:  # Réduit de 60% à 40% pour être moins strict
+                    score += 5
+                if match_ratio >= 0.6:
+                    score += 3  # Bonus supplémentaire si 60%+
             
-            # Bonus pour les numéros de modèle (ex: 7800X3D, 4000D)
+            # Bonus pour les numéros de modèle (ex: 7800X3D, 4000D, 274QPF)
             model_numbers = re.findall(r'\d+[A-Z]?\d*[A-Z]?', query_lower)
             for model in model_numbers:
                 if model in title_lower:
                     score += 10  # Gros bonus pour les numéros de modèle
+            
+            # Bonus si le titre contient des parties importantes de la recherche
+            # Ex: "MSI MAG 274QPF" devrait matcher même si pas tous les mots
+            important_parts = []
+            for word in query_words:
+                if len(word) >= 4:  # Mots de 4+ caractères sont importants
+                    important_parts.append(word)
+            
+            if important_parts:
+                important_matches = sum(1 for part in important_parts if part in title_lower)
+                if important_matches >= len(important_parts) * 0.5:  # Au moins 50% des mots importants
+                    score += 3
+            
+            # Si aucun score mais qu'on a trouvé le produit, donner un score minimum
+            if score == 0 and title:
+                score = 1  # Score minimum pour accepter le produit
             
             products_with_scores.append({
                 "title": title,
@@ -486,8 +539,14 @@ class MemoryExpressScraper:
         products_with_scores.sort(key=lambda x: x['score'], reverse=True)
         
         # Filtrer: ne garder que les produits avec un score minimum
-        min_score = 2  # Au moins 1 mot-clé trouvé
+        # Réduire le seuil pour être moins strict (0 = accepter tous les produits trouvés)
+        min_score = 0  # Accepter tous les produits trouvés (le tri par score fera le reste)
         filtered_products = [p for p in products_with_scores if p['score'] >= min_score]
+        
+        # Si aucun produit avec score > 0, prendre quand même les premiers (peut-être que le scoring est trop strict)
+        if not filtered_products and products_with_scores:
+            logger.warning(f"⚠️ Tous les produits ont un score de 0, mais on les accepte quand même (scoring peut être trop strict)")
+            filtered_products = products_with_scores
         
         # Prendre les meilleurs résultats
         products_list = [{"title": p["title"], "price": p["price"], "url": p["url"]} 
