@@ -10,6 +10,8 @@ from config import CHECK_INTERVAL_MINUTES, BIG_DISCOUNT_THRESHOLD, GLOBAL_SCAN_I
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
 # Les scrapers seront passés depuis bot.py
 amazon_scraper = None
 newegg_scraper = None
@@ -1358,17 +1360,31 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Formater la réponse
         response = format_stock_analysis(analysis)
         
+        # Nettoyer le Markdown pour éviter les erreurs de parsing
+        response = response.replace("**", "*")  # Simplifier le markdown
+        response = response.replace("__", "")  # Enlever les underscores doubles
+        
         # Envoyer la réponse (diviser en plusieurs messages si trop long)
         if len(response) > 4096:  # Limite Telegram
             # Envoyer en plusieurs parties
             parts = split_long_message(response, 4000)
             for i, part in enumerate(parts):
                 if i == 0:
-                    await status_msg.edit_text(part, parse_mode="Markdown")
+                    try:
+                        await status_msg.edit_text(part, parse_mode="Markdown")
+                    except:
+                        await status_msg.edit_text(part)  # Sans markdown si erreur
                 else:
-                    await update.message.reply_text(part, parse_mode="Markdown")
+                    try:
+                        await update.message.reply_text(part, parse_mode="Markdown")
+                    except:
+                        await update.message.reply_text(part)  # Sans markdown si erreur
         else:
-            await status_msg.edit_text(response, parse_mode="Markdown")
+            try:
+                await status_msg.edit_text(response, parse_mode="Markdown")
+            except Exception as e:
+                logger.warning(f"Erreur Markdown, envoi sans formatage: {e}")
+                await status_msg.edit_text(response)  # Sans markdown si erreur
             
     except Exception as e:
         logger.error(f"Erreur lors de l'analyse de {ticker}: {e}", exc_info=True)
@@ -1379,7 +1395,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 def format_stock_analysis(analysis: dict) -> str:
-    """Formate l'analyse d'action pour Telegram."""
+    """Formate l'analyse d'action pour Telegram (version simplifiée)."""
     ticker = analysis.get("ticker", "N/A")
     stock_data = analysis.get("stock_data", {})
     chart_analysis = analysis.get("chart_analysis", {})
@@ -1387,75 +1403,30 @@ def format_stock_analysis(analysis: dict) -> str:
     news = analysis.get("news", [])
     summary = analysis.get("summary", {})
     
-    # En-tête
-    response = f"📊 **Analyse de {ticker}**\n\n"
-    response += "=" * 30 + "\n\n"
+    # En-tête simplifié
+    response = f"📊 **{ticker}**\n\n"
     
-    # Données techniques
-    response += "📈 **Données Techniques**\n"
+    # Données essentielles (simplifié)
     if stock_data.get("price"):
         response += f"💰 Prix: ${stock_data['price']:.2f}\n"
-    if stock_data.get("change"):
-        change = stock_data["change"]
-        emoji = "📈" if "+" in str(change) or (isinstance(change, (int, float)) and change > 0) else "📉"
-        response += f"{emoji} Variation: {change}\n"
-    if stock_data.get("pe_ratio"):
-        response += f"📊 P/E Ratio: {stock_data['pe_ratio']}\n"
-    if stock_data.get("volume"):
-        vol = stock_data["volume"]
-        if isinstance(vol, int):
-            vol_str = f"{vol:,}" if vol < 1_000_000 else f"{vol/1_000_000:.2f}M"
-            response += f"📊 Volume: {vol_str}\n"
-        else:
-            response += f"📊 Volume: {vol}\n"
-    if stock_data.get("market_cap"):
-        response += f"💼 Market Cap: {stock_data['market_cap']}\n"
-    if stock_data.get("rsi"):
-        response += f"📊 RSI: {stock_data['rsi']:.2f}\n"
-    if stock_data.get("beta"):
-        response += f"📊 Beta: {stock_data['beta']:.2f}\n"
+    if chart_analysis.get("trend"):
+        trend = chart_analysis["trend"]
+        emoji = "🟢" if trend == "Haussière" else "🔴" if trend == "Baissière" else "🟡"
+        response += f"{emoji} Tendance: {trend}\n"
+    if chart_analysis.get("price_change_percent") is not None:
+        pct = chart_analysis["price_change_percent"]
+        emoji = "📈" if pct > 0 else "📉"
+        response += f"{emoji} {pct:+.2f}%\n"
     
     response += "\n"
     
-    # Analyse graphique
-    if chart_analysis:
-        response += "📈 **Analyse Graphique**\n"
-        if chart_analysis.get("current_price"):
-            response += f"💰 Prix actuel: ${chart_analysis['current_price']:.2f}\n"
-        if chart_analysis.get("price_change_percent"):
-            pct = chart_analysis["price_change_percent"]
-            emoji = "📈" if pct > 0 else "📉"
-            response += f"{emoji} Variation: {pct:+.2f}%\n"
-        if chart_analysis.get("trend"):
-            trend = chart_analysis["trend"]
-            emoji = "🟢" if trend == "Haussière" else "🔴" if trend == "Baissière" else "🟡"
-            response += f"{emoji} Tendance: {trend}\n"
-        if chart_analysis.get("support_level"):
-            response += f"📉 Support: ${chart_analysis['support_level']:.2f}\n"
-        if chart_analysis.get("resistance_level"):
-            response += f"📈 Résistance: ${chart_analysis['resistance_level']:.2f}\n"
-        if chart_analysis.get("rsi"):
-            rsi = chart_analysis["rsi"]
-            if rsi > 70:
-                status = "Survente ⚠️"
-            elif rsi < 30:
-                status = "Survente 💡"
-            else:
-                status = "Normal"
-            response += f"📊 RSI: {rsi:.2f} ({status})\n"
-        
-        response += "\n"
-    
-    # Recommandation IA
+    # Recommandation IA (simplifié)
     ai_error = analysis.get("ai_error")
     ai_analysis = analysis.get("ai_analysis")
     
     if ai_error:
-        response += "🤖 **Analyse IA**\n"
-        response += "⚠️ **IA non disponible**\n"
-        response += f"❌ {ai_error[:100]}\n\n"
+        response += f"⚠️ IA: {ai_error[:80]}\n\n"
     elif ai_analysis:
-        response += "🤖 **Analyse IA (Groq)**\n"
         recommendation = ai_analysis.get("recommendation", "HOLD")
         confidence = ai_analysis.get("confidence", 5)
         
@@ -1467,17 +1438,16 @@ def format_stock_analysis(analysis: dict) -> str:
         else:
             emoji = "🟡"
         
-        response += f"{emoji} **Recommandation: {recommendation}**\n"
-        response += f"🎯 Confiance: {confidence}/10\n\n"
+        response += f"{emoji} **{recommendation}** | Confiance: {confidence}/10\n\n"
         
-        # Les 3 meilleures situations (afficher une seule fois)
+        # Les 3 meilleures situations (TOUJOURS AFFICHER)
         situations = ai_analysis.get("situations", [])
+        logger.info(f"📊 Situations reçues pour affichage: {len(situations)}")
+        
         if situations:
-            # S'assurer qu'on n'a pas de doublons
             seen_situations = []
             unique_situations = []
             for situation in situations:
-                # Créer une clé unique basée sur le prix d'entrée et le score
                 situation_key = (
                     situation.get("prix_entree"),
                     situation.get("score"),
@@ -1488,76 +1458,54 @@ def format_stock_analysis(analysis: dict) -> str:
                     unique_situations.append(situation)
             
             if unique_situations:
-                response += "💰 **LES 3 MEILLEURES SITUATIONS D'INVESTISSEMENT**\n\n"
+                response += "💰 **3 Meilleures Situations d'Investissement**\n\n"
                 for i, situation in enumerate(unique_situations[:3], 1):
                     score = situation.get("score", "N/A")
                     prix_entree = situation.get("prix_entree")
                     prix_sortie = situation.get("prix_sortie")
                     stop_loss = situation.get("stop_loss")
                     potentiel = situation.get("potentiel_gain")
-                    risque = situation.get("risque", "N/A")
-                    horizon = situation.get("horizon", "N/A")
+                    risque = situation.get("risque", "")
+                    horizon = situation.get("horizon", "")
                     raison = situation.get("raison", "")
                     
-                    response += f"**🎯 SITUATION {i}** (Score: {score}/10)\n"
+                    response += f"**🎯 Situation {i}** (Score: {score}/10)\n"
                     if prix_entree:
-                        response += f"📥 Prix d'entrée: ${prix_entree:.2f}\n"
+                        response += f"📥 Entrée: ${prix_entree:.2f}\n"
+                    else:
+                        response += f"📥 Entrée: N/A\n"
                     if prix_sortie:
-                        response += f"📤 Prix de sortie: ${prix_sortie:.2f}\n"
+                        response += f"📤 Sortie: ${prix_sortie:.2f}\n"
+                    else:
+                        response += f"📤 Sortie: N/A\n"
                     if stop_loss:
-                        response += f"🛑 Stop loss: ${stop_loss:.2f}\n"
+                        response += f"🛑 Stop Loss: ${stop_loss:.2f}\n"
                     if potentiel:
-                        response += f"📈 Potentiel de gain: {potentiel:.1f}%\n"
+                        response += f"📈 Gain potentiel: {potentiel:.1f}%\n"
                     if risque:
                         response += f"⚠️ Risque: {risque}\n"
                     if horizon:
                         response += f"⏰ Horizon: {horizon}\n"
                     if raison:
-                        raison_short = raison[:100] + "..." if len(raison) > 100 else raison
+                        raison_short = raison[:80] + "..." if len(raison) > 80 else raison
                         response += f"💡 {raison_short}\n"
                     response += "\n"
+            else:
+                response += "⚠️ Aucune situation trouvée dans l'analyse\n\n"
+        else:
+            response += "⚠️ Aucune stratégie d'investissement fournie par l'IA\n\n"
         
-        # Raisonnement (seulement si pas de situations pour éviter duplication)
+        # Raisonnement court
         reasoning = ai_analysis.get("reasoning", "")
         if reasoning and not situations:
-            # Prendre les premières lignes du raisonnement
-            reasoning_lines = reasoning.split("\n")[:5]
-            response += "💡 **Raisonnement:**\n"
-            for line in reasoning_lines:
-                if line.strip() and not line.strip().startswith("SITUATION"):
-                    response += f"• {line.strip()}\n"
-            response += "\n"
+            # Prendre les 2-3 premières phrases
+            reasoning_lines = [l.strip() for l in reasoning.split("\n") if l.strip() and not l.strip().startswith("SITUATION")][:3]
+            if reasoning_lines:
+                response += "💡 " + " ".join(reasoning_lines[:2])[:150] + "\n"
     
-    # Nouvelles récentes
+    # Nouvelles (simplifié)
     if news:
-        response += "📰 **Nouvelles Récentes**\n"
-        for i, article in enumerate(news[:3], 1):
-            title = article.get("title", "Sans titre")
-            date = article.get("date", "")
-            # Limiter la longueur du titre
-            if len(title) > 60:
-                title = title[:57] + "..."
-            response += f"{i}. {title}\n"
-            if date:
-                response += f"   📅 {date}\n"
-        response += "\n"
-    
-    # Résumé
-    if summary:
-        response += "📋 **Résumé**\n"
-        if summary.get("current_price"):
-            response += f"💰 Prix: ${summary['current_price']:.2f}\n"
-        if summary.get("key_points"):
-            response += "\n**Points clés:**\n"
-            for point in summary["key_points"][:3]:
-                if point:
-                    response += f"• {point}\n"
-    
-    response += "\n" + "=" * 30 + "\n"
-    if ai_analysis and not ai_error:
-        response += "💡 *Analyse générée avec Groq (Llama 3.1)*"
-    else:
-        response += "💡 *Analyse générée (sans IA)*"
+        response += f"📰 {len(news)} nouvelle(s)\n\n"
     
     return response
 

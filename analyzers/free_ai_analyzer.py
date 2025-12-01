@@ -151,8 +151,20 @@ class FreeAIAnalyzer:
             if not response_text:
                 return None
             
+            # Log de la réponse brute pour debug (premiers 1000 caractères)
+            logger.info(f"📝 Réponse brute Groq pour {ticker} (premiers 1000 chars):\n{response_text[:1000]}")
+            
+            # Calculer le score de base automatiquement basé sur les données réelles
+            base_score = self._calculate_base_score(stock_data, news, chart_analysis)
+            logger.info(f"📊 Score de base calculé pour {ticker}: {base_score}/10 (basé sur données techniques + nouvelles + graphique)")
+            
             # Parser la réponse
-            analysis = self._parse_ai_response(response_text, ticker)
+            analysis = self._parse_ai_response(response_text, ticker, base_score)
+            
+            # Si aucune situation n'est trouvée, créer des situations par défaut basées sur les données du graphique
+            if not analysis.get("situations") and chart_analysis:
+                logger.warning(f"⚠️ Aucune situation trouvée dans la réponse Groq pour {ticker}, création de situations par défaut")
+                analysis["situations"] = self._create_default_situations(ticker, stock_data, chart_analysis)
             
             logger.info(f"✅ Analyse {self.provider.upper()} complétée pour {ticker}")
             return analysis
@@ -255,6 +267,122 @@ class FreeAIAnalyzer:
             logger.warning(f"⚠️ Erreur lors du chargement du prompt: {e}, utilisation du prompt par défaut")
             return None
     
+    def _calculate_base_score(
+        self,
+        stock_data: Dict,
+        news: list,
+        chart_analysis: Dict
+    ) -> int:
+        """Calcule un score de base basé sur les données réelles."""
+        score = 5  # Score de base
+        
+        # Facteur 1: Qualité des données techniques (0-2 points)
+        tech_data_count = sum([
+            1 if stock_data.get('price') else 0,
+            1 if stock_data.get('pe_ratio') else 0,
+            1 if stock_data.get('volume') else 0,
+            1 if stock_data.get('rsi') else 0,
+            1 if stock_data.get('beta') else 0,
+        ])
+        if tech_data_count >= 4:
+            score += 2
+        elif tech_data_count >= 2:
+            score += 1
+        
+        # Facteur 2: Nouvelles disponibles (0-2 points)
+        news_count = len(news)
+        if news_count >= 3:
+            score += 2
+        elif news_count >= 1:
+            score += 1
+        
+        # Facteur 3: Clarté de la tendance graphique (0-2 points)
+        trend = chart_analysis.get('trend', '')
+        if trend in ['Haussière', 'Baissière']:
+            score += 2
+        elif trend == 'Neutre':
+            score += 1
+        
+        # Facteur 4: RSI disponible (0-1 point)
+        if chart_analysis.get('rsi'):
+            score += 1
+        
+        # Limiter entre 1 et 10
+        return max(1, min(10, score))
+    
+    def _create_default_situations(
+        self,
+        ticker: str,
+        stock_data: Dict,
+        chart_analysis: Dict
+    ) -> list:
+        """Crée des situations par défaut basées sur les données du graphique."""
+        situations = []
+        
+        current_price = chart_analysis.get('current_price') or stock_data.get('price')
+        support = chart_analysis.get('support_level')
+        resistance = chart_analysis.get('resistance_level')
+        
+        if not current_price:
+            return situations
+        
+        # Situation 1: Achat conservateur (basé sur support)
+        if support and support < current_price:
+            entry1 = support * 0.98  # 2% sous le support
+            exit1 = resistance if resistance else current_price * 1.15
+            stop1 = support * 0.95
+            gain1 = ((exit1 - entry1) / entry1 * 100) if exit1 > entry1 else 0
+            
+            situations.append({
+                "numero": 1,
+                "prix_entree": round(entry1, 2),
+                "prix_sortie": round(exit1, 2),
+                "stop_loss": round(stop1, 2),
+                "score": 8,
+                "raison": f"Achat au niveau de support technique ({support:.2f})",
+                "horizon": "Moyen terme",
+                "potentiel_gain": round(gain1, 1),
+                "risque": "Modéré"
+            })
+        
+        # Situation 2: Achat actuel (prix actuel)
+        exit2 = resistance if resistance else current_price * 1.10
+        stop2 = current_price * 0.92
+        gain2 = ((exit2 - current_price) / current_price * 100) if exit2 > current_price else 0
+        
+        situations.append({
+            "numero": 2,
+            "prix_entree": round(current_price, 2),
+            "prix_sortie": round(exit2, 2),
+            "stop_loss": round(stop2, 2),
+            "score": 7,
+            "raison": f"Achat au prix actuel avec objectif sur résistance",
+            "horizon": "Court terme",
+            "potentiel_gain": round(gain2, 1),
+            "risque": "Modéré"
+        })
+        
+        # Situation 3: Achat agressif (sous le prix actuel)
+        entry3 = current_price * 0.95
+        exit3 = resistance if resistance else current_price * 1.20
+        stop3 = current_price * 0.90
+        gain3 = ((exit3 - entry3) / entry3 * 100) if exit3 > entry3 else 0
+        
+        situations.append({
+            "numero": 3,
+            "prix_entree": round(entry3, 2),
+            "prix_sortie": round(exit3, 2),
+            "stop_loss": round(stop3, 2),
+            "score": 6,
+            "raison": f"Achat en baisse avec objectif optimiste",
+            "horizon": "Moyen terme",
+            "potentiel_gain": round(gain3, 1),
+            "risque": "Élevé"
+        })
+        
+        logger.info(f"✅ {len(situations)} situations par défaut créées pour {ticker}")
+        return situations
+    
     def _build_analysis_prompt(
         self,
         ticker: str,
@@ -262,76 +390,72 @@ class FreeAIAnalyzer:
         news: list,
         chart_analysis: Dict
     ) -> str:
-        """Construit le prompt pour l'IA en utilisant le template."""
+        """Construit le prompt simplifié pour l'IA."""
         
-        # Charger le template personnalisé
-        template = self._load_prompt_template()
+        # Calculer le score de base automatiquement
+        base_score = self._calculate_base_score(stock_data, news, chart_analysis)
         
-        # Formater les données
-        tech_data = f"""
-Données techniques ({ticker}):
-- Prix actuel: ${stock_data.get('price', 'N/A')}
-- P/E Ratio: {stock_data.get('pe_ratio', 'N/A')}
-- Volume: {stock_data.get('volume', 'N/A')}
-- Market Cap: {stock_data.get('market_cap', 'N/A')}
-- RSI: {stock_data.get('rsi', 'N/A')}
-- Beta: {stock_data.get('beta', 'N/A')}
-- Change: {stock_data.get('change', 'N/A')}
-- EPS: {stock_data.get('eps', 'N/A')}
-- Dividend: {stock_data.get('dividend', 'N/A')}
-- 52W Range: {stock_data.get('52w_range', 'N/A')}
+        # Formater les données de manière concise
+        tech_data = f"""Données techniques:
+Prix: ${stock_data.get('price', 'N/A')} | P/E: {stock_data.get('pe_ratio', 'N/A')} | Volume: {stock_data.get('volume', 'N/A')}
+RSI: {stock_data.get('rsi', 'N/A')} | Beta: {stock_data.get('beta', 'N/A')} | Change: {stock_data.get('change', 'N/A')}
 """
         
-        news_text = "\nNouvelles récentes:\n"
-        for i, article in enumerate(news[:5], 1):
-            news_text += f"{i}. {article.get('title', 'N/A')} ({article.get('date', 'N/A')})\n"
-        if not news:
-            news_text = "\nAucune nouvelle récente disponible.\n"
+        news_text = f"Nouvelles: {len(news)} article(s)\n"
+        for i, article in enumerate(news[:3], 1):
+            title = article.get('title', 'N/A')[:60]
+            news_text += f"{i}. {title}\n"
         
-        chart_text = f"""
-Analyse graphique:
-- Tendance: {chart_analysis.get('trend', 'N/A')}
-- Prix actuel: ${chart_analysis.get('current_price', 'N/A')}
-- Variation: {chart_analysis.get('price_change_percent', 'N/A')}%
-- Support: ${chart_analysis.get('support_level', 'N/A')}
-- Résistance: ${chart_analysis.get('resistance_level', 'N/A')}
-- RSI: {chart_analysis.get('rsi', 'N/A')}
-- SMA 20: ${chart_analysis.get('moving_averages', {}).get('sma_20', 'N/A')}
-- SMA 50: ${chart_analysis.get('moving_averages', {}).get('sma_50', 'N/A')}
-- High 52W: ${chart_analysis.get('high_52w', 'N/A')}
-- Low 52W: ${chart_analysis.get('low_52w', 'N/A')}
+        trend = chart_analysis.get('trend', 'N/A')
+        chart_text = f"""Graphique:
+Tendance: {trend} | Variation: {chart_analysis.get('price_change_percent', 'N/A')}%
+Support: ${chart_analysis.get('support_level', 'N/A')} | Résistance: ${chart_analysis.get('resistance_level', 'N/A')}
+RSI: {chart_analysis.get('rsi', 'N/A')}
 """
         
-        # Si template personnalisé existe, l'utiliser
-        if template:
-            prompt = template.format(
-                stock_data=tech_data,
-                nouvelles=news_text,
-                analyse_graphique=chart_text
-            )
-        else:
-            # Fallback sur prompt par défaut
-            prompt = f"""Tu es un analyste financier expert. Analyse cette action et donne une recommandation.
+        # Prompt simplifié et direct avec sources réelles
+        prompt = f"""Analyse {ticker} comme un investisseur expert.
 
+**IMPORTANT - SOURCES RÉELLES OBLIGATOIRES:**
+- Utilise UNIQUEMENT les données fournies ci-dessous (Finviz, Yahoo Finance, analyse technique)
+- Ne invente JAMAIS de données ou de faits
+- Base-toi sur les valeurs RÉELLES des indicateurs techniques
+- Utilise les nouvelles RÉELLES fournies pour évaluer le sentiment
+- Les prix d'entrée/sortie DOIVENT être basés sur les supports/résistances RÉELS du graphique
+
+DONNÉES RÉELLES (sources: Finviz, Yahoo Finance, analyse technique):
 {tech_data}
-
 {news_text}
-
 {chart_text}
 
-Analyse cette action et fournis:
-1. **Recommandation**: ACHETER, VENDRE, ou HOLD
-2. **Score de confiance**: 1-10 (10 = très confiant)
-3. **Raisonnement**: Explication détaillée de ta recommandation (3-5 phrases)
-4. **Points positifs**: 2-3 points forts
-5. **Points négatifs**: 2-3 points faibles
-6. **Risques**: Principaux risques à surveiller
+Donne une réponse CONCISE basée UNIQUEMENT sur ces données réelles:
+1. RECOMMANDATION: ACHETER / VENDRE / HOLD (basée sur les données réelles)
+2. CONFIANCE: {base_score}/10 (ajuste selon qualité réelle des données disponibles)
+3. RAISON (2-3 phrases): Synthèse des données techniques RÉELLES + graphique RÉEL + nouvelles RÉELLES
+4. PRIX ENTRÉE: $XX.XX (basé sur support RÉEL du graphique)
+5. PRIX SORTIE: $XX.XX (basé sur résistance RÉELLE du graphique)
+6. STOP LOSS: $XX.XX (protection basée sur les niveaux RÉELS)
 
-Format ta réponse de manière claire et structurée."""
+**LES 3 MEILLEURES SITUATIONS D'INVESTISSEMENT:**
+Pour chaque situation, fournis:
+- PRIX ENTRÉE: $XX.XX (basé sur support/résistance RÉEL)
+- PRIX SORTIE: $XX.XX (objectif basé sur résistance RÉELLE)
+- STOP LOSS: $XX.XX
+- SCORE: X/10 (10 = meilleure opportunité)
+- RAISON: Pourquoi cette situation est intéressante (basée sur données réelles)
+- HORIZON: Court/Moyen/Long terme
+- POTENTIEL DE GAIN: X% (calculé: (sortie - entrée) / entrée * 100)
+- RISQUE: Faible/Modéré/Élevé
+
+SITUATION 1 (MEILLEURE - Score 9-10):
+SITUATION 2 (Score 7-8):
+SITUATION 3 (Score 5-7):
+
+Sois concis, factuel, et utilise UNIQUEMENT les données réelles fournies."""
         
         return prompt
     
-    def _parse_ai_response(self, response: str, ticker: str) -> Dict:
+    def _parse_ai_response(self, response: str, ticker: str, base_score: int = 5) -> Dict:
         """Parse la réponse de l'IA."""
         try:
             import re
@@ -340,7 +464,7 @@ Format ta réponse de manière claire et structurée."""
                 "ticker": ticker,
                 "raw_response": response,
                 "recommendation": "HOLD",
-                "confidence": 5,
+                "confidence": base_score,  # Utiliser le score calculé par défaut
                 "reasoning": "",
                 "situations": [],  # Les 3 meilleures situations
                 "positives": [],
@@ -356,23 +480,67 @@ Format ta réponse de manière claire et structurée."""
             else:
                 analysis["recommendation"] = "HOLD"
             
-            # Extraire le score de confiance
-            confidence_match = re.search(r'confiance[:\s]+(\d+)', response, re.I)
-            if confidence_match:
-                analysis["confidence"] = int(confidence_match.group(1))
+            # Extraire le score de confiance (plusieurs patterns possibles)
+            confidence_patterns = [
+                r'confiance[:\s]+(\d+)/10',
+                r'confiance[:\s]+(\d+)',
+                r'CONFIANCE[:\s]+(\d+)',
+                r'score\s+de\s+confiance[:\s]+(\d+)',
+                r'confidence[:\s]+(\d+)',
+                r'confiance[:\s]+(\d+)\s+sur\s+10',
+            ]
+            confidence_found = False
+            for pattern in confidence_patterns:
+                confidence_match = re.search(pattern, response, re.I)
+                if confidence_match:
+                    conf_value = int(confidence_match.group(1))
+                    if 1 <= conf_value <= 10:
+                        analysis["confidence"] = conf_value
+                        logger.info(f"✅ Score de confiance extrait pour {ticker}: {conf_value}/10")
+                        confidence_found = True
+                        break
+            
+            if not confidence_found:
+                logger.warning(f"⚠️ Score de confiance non trouvé dans la réponse pour {ticker}, utilisation de la valeur par défaut: 5/10")
             
             # Extraire les 3 meilleures situations
             # Chercher les sections "SITUATION 1", "SITUATION 2", "SITUATION 3"
             situations_found = []
+            logger.info(f"🔍 Recherche des 3 situations dans la réponse pour {ticker}...")
+            
             for i in range(1, 4):
-                situation_pattern = rf'SITUATION\s+{i}[^\n]*\n(.*?)(?=SITUATION\s+{i+1}|$)'
-                situation_match = re.search(situation_pattern, response, re.IGNORECASE | re.DOTALL)
+                # Patterns plus flexibles pour trouver les situations
+                next_i = i + 1
+                situation_patterns = [
+                    rf'SITUATION\s+{i}[^\n]*\n(.*?)(?=SITUATION\s+{next_i}|$)',
+                    rf'SITUATION\s+{i}[^\n]*\n(.*?)(?=SITUATION\s+{next_i}|POINTS|RISQUES|$)',
+                    rf'\*\*SITUATION\s+{i}\*\*[^\n]*\n(.*?)(?=SITUATION\s+{next_i}|POINTS|RISQUES|$)',
+                    rf'{i}\.[^\n]*SITUATION[^\n]*\n(.*?)(?={next_i}\.|POINTS|RISQUES|$)',
+                    rf'SITUATION\s+{i}.*?PRIX\s+ENTRÉE[^\n]*\n(.*?)(?=SITUATION\s+{next_i}|$)',
+                    rf'SITUATION\s+{i}.*?ENTRÉE[^\n]*\n(.*?)(?=SITUATION\s+{next_i}|$)',
+                ]
                 
-                if situation_match:
-                    situation_text = situation_match.group(1)
-                    situation = self._parse_situation(situation_text, i)
-                    if situation:
-                        situations_found.append(situation)
+                situation_found_for_i = False
+                for pattern in situation_patterns:
+                    try:
+                        situation_match = re.search(pattern, response, re.IGNORECASE | re.DOTALL)
+                        if situation_match:
+                            situation_text = situation_match.group(1)
+                            logger.debug(f"📝 Texte situation {i} extrait: {situation_text[:100]}...")
+                            situation = self._parse_situation(situation_text, i)
+                            if situation:
+                                situations_found.append(situation)
+                                logger.info(f"✅ Situation {i} trouvée et parsée pour {ticker}")
+                                situation_found_for_i = True
+                                break
+                    except re.error as e:
+                        logger.warning(f"⚠️ Erreur regex pattern pour situation {i} de {ticker}: {e}")
+                        continue
+                
+                if not situation_found_for_i:
+                    logger.warning(f"⚠️ Situation {i} non trouvée dans la réponse pour {ticker}")
+            
+            logger.info(f"📊 Total situations trouvées pour {ticker}: {len(situations_found)}/3")
             
             # Stocker les situations (sans doublons)
             analysis["situations"] = situations_found
@@ -381,20 +549,26 @@ Format ta réponse de manière claire et structurée."""
             reasoning_clean = response
             if situations_found:
                 # Retirer la section des situations du raisonnement
-                reasoning_clean = re.sub(
-                    r'STRATÉGIE DE PRIX.*?SITUATION\s+3.*?(?=\d\.\s+\*\*POINTS|$)',
-                    '',
-                    reasoning_clean,
-                    flags=re.IGNORECASE | re.DOTALL
-                )
-                # Retirer aussi les sections individuelles
-                for i in range(1, 4):
+                try:
                     reasoning_clean = re.sub(
-                        rf'SITUATION\s+{i}.*?(?=SITUATION\s+{i+1}|\d\.\s+\*\*POINTS|$)',
+                        r'STRATÉGIE DE PRIX.*?SITUATION\s+3.*?(?=\d\.\s+\*\*POINTS|$)',
                         '',
                         reasoning_clean,
                         flags=re.IGNORECASE | re.DOTALL
                     )
+                    # Retirer aussi les sections individuelles
+                    for j in range(1, 4):
+                        next_j = j + 1
+                        pattern = f'SITUATION\\s+{j}.*?(?=SITUATION\\s+{next_j}|\\d\\.\\s+\\*\\*POINTS|$)'
+                        reasoning_clean = re.sub(
+                            pattern,
+                            '',
+                            reasoning_clean,
+                            flags=re.IGNORECASE | re.DOTALL
+                        )
+                except re.error as e:
+                    logger.warning(f"⚠️ Erreur regex lors du nettoyage du raisonnement pour {ticker}: {e}")
+                    # Si erreur regex, garder le raisonnement original
             
             analysis["reasoning"] = reasoning_clean.strip()
             
@@ -425,30 +599,94 @@ Format ta réponse de manière claire et structurée."""
                 "risque": ""
             }
             
-            # Extraire prix d'entrée
-            entree_match = re.search(r'prix\s+d[''"]?entrée[:\s]+\$?([\d.]+)', situation_text, re.I)
-            if entree_match:
-                situation["prix_entree"] = float(entree_match.group(1))
+            logger.debug(f"🔍 Parsing situation {num}, texte: {situation_text[:200]}")
             
-            # Extraire prix de sortie
-            sortie_match = re.search(r'prix\s+de\s+sortie[:\s]+\$?([\d.]+)', situation_text, re.I)
-            if sortie_match:
-                situation["prix_sortie"] = float(sortie_match.group(1))
+            # Extraire prix d'entrée (plusieurs patterns)
+            entree_patterns = [
+                r'prix\s+d[''"]?entrée[:\s]+\$?([\d.]+)',
+                r'entrée[:\s]+\$?([\d.]+)',
+                r'prix\s+d[''"]?entree[:\s]+\$?([\d.]+)',
+                r'acheter\s+à[:\s]+\$?([\d.]+)',
+            ]
+            for pattern in entree_patterns:
+                entree_match = re.search(pattern, situation_text, re.I)
+                if entree_match:
+                    try:
+                        situation["prix_entree"] = float(entree_match.group(1))
+                        break
+                    except:
+                        continue
             
-            # Extraire stop loss
-            stop_match = re.search(r'stop\s+loss[:\s]+\$?([\d.]+)', situation_text, re.I)
-            if stop_match:
-                situation["stop_loss"] = float(stop_match.group(1))
+            # Extraire prix de sortie (plusieurs patterns)
+            sortie_patterns = [
+                r'prix\s+de\s+sortie[:\s]+\$?([\d.]+)',
+                r'sortie[:\s]+\$?([\d.]+)',
+                r'vendre\s+à[:\s]+\$?([\d.]+)',
+                r'objectif[:\s]+\$?([\d.]+)',
+                r'cible[:\s]+\$?([\d.]+)',
+            ]
+            for pattern in sortie_patterns:
+                sortie_match = re.search(pattern, situation_text, re.I)
+                if sortie_match:
+                    try:
+                        situation["prix_sortie"] = float(sortie_match.group(1))
+                        break
+                    except:
+                        continue
             
-            # Extraire score
-            score_match = re.search(r'score[:\s]+(\d+)/10', situation_text, re.I)
-            if score_match:
-                situation["score"] = int(score_match.group(1))
+            # Extraire stop loss (plusieurs patterns)
+            stop_patterns = [
+                r'stop\s+loss[:\s]+\$?([\d.]+)',
+                r'stop[:\s]+\$?([\d.]+)',
+                r'limite\s+de\s+perte[:\s]+\$?([\d.]+)',
+            ]
+            for pattern in stop_patterns:
+                stop_match = re.search(pattern, situation_text, re.I)
+                if stop_match:
+                    try:
+                        situation["stop_loss"] = float(stop_match.group(1))
+                        break
+                    except:
+                        continue
             
-            # Extraire potentiel de gain
-            gain_match = re.search(r'potentiel\s+de\s+gain[:\s]+([\d.]+)%', situation_text, re.I)
-            if gain_match:
-                situation["potentiel_gain"] = float(gain_match.group(1))
+            # Extraire score (plusieurs patterns possibles)
+            score_patterns = [
+                r'score[:\s]+(\d+)/10',
+                r'score[:\s]+(\d+)',
+                r'score\s+de\s+la\s+situation[:\s]+(\d+)',
+                r'situation.*?score[:\s]+(\d+)',
+                r'\(score[:\s]+(\d+)\)',
+            ]
+            score_found = False
+            for pattern in score_patterns:
+                score_match = re.search(pattern, situation_text, re.I)
+                if score_match:
+                    score_value = int(score_match.group(1))
+                    if 1 <= score_value <= 10:
+                        situation["score"] = score_value
+                        logger.info(f"✅ Score situation {num} extrait pour {ticker}: {score_value}/10")
+                        score_found = True
+                        break
+            
+            if not score_found:
+                logger.warning(f"⚠️ Score situation {num} non trouvé pour {ticker}")
+            
+            # Extraire potentiel de gain (plusieurs patterns)
+            gain_patterns = [
+                r'potentiel\s+de\s+gain[:\s]+([\d.]+)%',
+                r'gain[:\s]+([\d.]+)%',
+                r'potentiel[:\s]+([\d.]+)%',
+                r'\+([\d.]+)%',
+                r'([\d.]+)%\s+de\s+gain',
+            ]
+            for pattern in gain_patterns:
+                gain_match = re.search(pattern, situation_text, re.I)
+                if gain_match:
+                    try:
+                        situation["potentiel_gain"] = float(gain_match.group(1))
+                        break
+                    except:
+                        continue
             
             # Extraire risque
             risque_match = re.search(r'risque[:\s]+(faible|modéré|élevé|faible|modere|eleve)', situation_text, re.I)
